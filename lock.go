@@ -30,7 +30,7 @@ type Lock struct {
 
 var ErrLockAlreadyHeld = errors.New("lock already held")
 
-func NewLock(rcli redisClient, opts ...func(*Lock)) *Lock {
+func NewLock(rcli redisClient, opts ...func(configurable)) *Lock {
 	dl := &Lock{
 		rcli:              rcli,
 		maxRetry:          -1,
@@ -187,4 +187,16 @@ func (dl *Lock) waitRetry(retries int) <-chan time.Time {
 		}
 	}
 	return time.After(dl.minRetryDelay + jitter)
+}
+
+func (dl *Lock) setJitterDuration(jitter time.Duration) {
+	dl.maxJitterDuration = jitter
+}
+
+func (dl *Lock) setMinRetryDelay(minDelay time.Duration) {
+	dl.minRetryDelay = minDelay
+}
+
+func (dl *Lock) setMaxRetry(maxRetry int) {
+	dl.maxRetry = maxRetry
 }
