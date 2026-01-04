@@ -39,12 +39,6 @@ func TestRedlock_Acquire(t *testing.T) {
 
 	// 2. Fail to acquire same key (should fail immediately or retry? Acquire retries logic)
 	// Acquire loops until success or context cancel.
-	// If we want to test that it doesn't acquire IMMEDIATELY, we'd need to mock or inspect.
-	// But since it's blocking, calling Acquire again with same key will BLOCK until timeout or existing lock expires.
-	// Wait, Acquire logic:
-	// loop { SetNX; if success return; sleep }
-	// So if I call Acquire again, it will BLOCK.
-	// I should test this blocking behavior or use a timeout.
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
@@ -186,4 +180,38 @@ func TestRedlock_MinRetryDelay(t *testing.T) {
 	if elapsed < expectedDuration {
 		t.Errorf("Expected duration >= %v, got %v", expectedDuration, elapsed)
 	}
+}
+
+func TestRedlock_TryAcquire(t *testing.T) {
+	rdb := setupRedis(t)
+	defer rdb.Close()
+	ctx := context.Background()
+
+	dl := redlock.NewLock(rdb)
+	key := "test-try-acquire-" + uuid.NewString()
+
+	// 1. Success
+	fencing, err := dl.TryAcquire(ctx, key, 10*time.Second)
+	if err != nil {
+		t.Fatalf("TryAcquire failed: %v", err)
+	}
+	if fencing == "" {
+		t.Error("Expected fencing token")
+	}
+
+	// 2. Fail immediately
+	start := time.Now()
+	_, err2 := dl.TryAcquire(ctx, key, 10*time.Second)
+	elapsed := time.Since(start)
+
+	if err2 != redlock.ErrLockAlreadyHeld {
+		t.Errorf("Expected ErrLockAlreadyHeld, got %v", err2)
+	}
+
+	// Should be very fast (no retries)
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("TryAcquire took too long: %v", elapsed)
+	}
+
+	rdb.Del(ctx, key)
 }

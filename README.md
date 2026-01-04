@@ -68,6 +68,21 @@ defer dl.Release(ctx, key, fencing)
 // Do work...
 ```
 
+### Try to Acquire a Lock (No Retry)
+
+If you want to attempt to acquire the lock exactly once without any retries (fail fast), use `TryAcquire`.
+
+```go
+fencing, err := dl.TryAcquire(ctx, key, ttl)
+if err != nil {
+    if err == redlock.ErrLockAlreadyHeld {
+        // Lock is already taken
+    } else {
+        // Error (e.g. Redis connection)
+    }
+}
+```
+
 ### Acquire or Extend a Lock
 
 If your work takes longer than expected, or if you want to ensure you hold the lock even if it might have expired (but no one else took it), you can use `AcquireOrExtend`.

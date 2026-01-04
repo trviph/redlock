@@ -27,6 +27,8 @@ type Lock struct {
 	maxRetry          int
 }
 
+var ErrLockAlreadyHeld = errors.New("lock already held")
+
 func NewLock(rcli redisClient, opts ...func(*Lock)) *Lock {
 	dl := &Lock{
 		rcli:              rcli,
@@ -40,7 +42,6 @@ func NewLock(rcli redisClient, opts ...func(*Lock)) *Lock {
 	return dl
 }
 
-// Acquire acquires a lock with a random uuid fencing value.
 // Acquire acquires a lock with a random uuid fencing value.
 // It returns the fencing token on success, or an error on failure.
 func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
@@ -61,8 +62,30 @@ func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (fen
 	return fencing, err
 }
 
-// AcquireOrExtend acquires a lock, if the fencing value matches, extends the lock.
-// If the lock does not exist, it attempts to acquire it.
+// TryAcquire attempts to acquire a lock exactly once without retrying.
+// It returns the fencing token on success, or an error on failure.
+// If the lock is already held, it returns ErrLockAlreadyHeld.
+func (dl *Lock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var typeOk bool
+			if err, typeOk = r.(error); !typeOk {
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}
+	}()
+
+	fencing = uuid.NewString()
+	cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
+	if cmd.Err() != nil {
+		return "", cmd.Err()
+	}
+	if !cmd.Val() {
+		return "", ErrLockAlreadyHeld
+	}
+	return fencing, nil
+}
+
 // AcquireOrExtend acquires a lock, if the fencing value matches, extends the lock.
 // If the lock does not exist, it attempts to acquire it.
 // It returns nil on success, or an error on failure.
