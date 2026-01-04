@@ -6,6 +6,7 @@ package redlock
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -47,7 +48,10 @@ func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (cmd
 		// but if it does, we want to handle it gracefully.
 		if r := recover(); r != nil {
 			cmd = nil
-			err = r.(error)
+			var ok bool
+			if err, ok = r.(error); !ok {
+				err = fmt.Errorf("panic: %v", r)
+			}
 		}
 	}()
 
