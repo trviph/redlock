@@ -165,3 +165,43 @@ func TestRedlock_Release(t *testing.T) {
 		t.Errorf("Expected key to be deleted")
 	}
 }
+
+func TestRedlock_MinRetryDelay(t *testing.T) {
+	rdb := setupRedis(t)
+	defer rdb.Close()
+	ctx := context.Background()
+
+	// 1. Acquire with client A
+	dlA := redlock.NewLock(rdb)
+	key := "test-min-wait-" + uuid.NewString()
+
+	_, _, err := dlA.Acquire(ctx, key, 10*time.Second)
+	if err != nil {
+		t.Fatalf("Client A failed to acquire: %v", err)
+	}
+	defer rdb.Del(ctx, key)
+
+	// 2. Try with client B with min wait
+	minWait := 200 * time.Millisecond
+	dlB := redlock.NewLock(rdb, redlock.SetMinRetryDelay(minWait), redlock.SetMaxRetry(1))
+
+	start := time.Now()
+	// This is expected to fail.
+	// We set MaxRetry to 1, which means:
+	// 1. Initial attempt -> fails -> wait (minWait + jitter)
+	// 2. Retry #1 -> fails -> wait (minWait + jitter)
+	// 3. Retry #2 (which is > maxRetry 1) -> aborts
+	// Total wait time should be at least 2 * minWait.
+
+	_, _, errB := dlB.Acquire(ctx, key, 10*time.Second)
+	elapsed := time.Since(start)
+
+	if errB == nil {
+		t.Fatal("Client B should have failed to acquire")
+	}
+
+	expectedDuration := 2 * minWait
+	if elapsed < expectedDuration {
+		t.Errorf("Expected duration >= %v, got %v", expectedDuration, elapsed)
+	}
+}

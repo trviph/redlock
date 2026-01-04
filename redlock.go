@@ -22,6 +22,7 @@ type redisClient interface {
 type Lock struct {
 	rcli              redisClient
 	maxJitterDuration time.Duration
+	minRetryDelay     time.Duration
 	maxRetry          int
 }
 
@@ -30,6 +31,7 @@ func NewLock(rcli redisClient, opts ...func(*Lock)) *Lock {
 		rcli:              rcli,
 		maxRetry:          -1,
 		maxJitterDuration: 300 * time.Millisecond,
+		minRetryDelay:     0,
 	}
 	for _, opt := range opts {
 		opt(dl)
@@ -84,7 +86,7 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 			if val > 0 {
 				return cmd, nil
 			}
-			time.Sleep(time.Duration(rand.Int63n(int64(dl.maxJitterDuration))))
+			dl.waitRetry()
 			retries++
 		}
 	}
@@ -109,7 +111,7 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 			if cmd.Val() {
 				return cmd, nil
 			}
-			time.Sleep(time.Duration(rand.Int63n(int64(dl.maxJitterDuration))))
+			dl.waitRetry()
 			retries++
 		}
 	}
@@ -125,4 +127,8 @@ func (dl *Lock) Release(ctx context.Context, key string, fencing string) error {
 	end
 	`
 	return dl.rcli.Eval(ctx, script, []string{key}, fencing).Err()
+}
+
+func (dl *Lock) waitRetry() {
+	time.Sleep(dl.minRetryDelay + time.Duration(rand.Int63n(int64(dl.maxJitterDuration))))
 }

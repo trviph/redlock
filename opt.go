@@ -21,3 +21,12 @@ func SetMaxRetry(maxRetry int) func(*Lock) {
 		dl.maxRetry = maxRetry
 	}
 }
+
+// Set a min retry delay for the lock.
+// This is the minimum time to wait before retrying to acquire the lock.
+// Default is 0.
+func SetMinRetryDelay(minDelay time.Duration) func(*Lock) {
+	return func(dl *Lock) {
+		dl.minRetryDelay = minDelay
+	}
+}
