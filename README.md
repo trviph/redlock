@@ -5,9 +5,11 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/trviph/redlock.svg)](https://pkg.go.dev/github.com/trviph/redlock)
 
 
-Redlock is a distributed lock service implementation in Go. It provides a distributed lock for your application following the [pattern](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/) published by Redis.
+Redlock is a distributed lock service implementation in Go backed by Redis. It provides a distributed lock for your application.
 
-**NOTE:** This is a demonstration for my blog post [Distributed Lock with Redis](https://vinhphuoc.dev/en/posts/redlock). While it is working as intended, please understand that it is not actively maintained.
+> **Note**: This package implements the standard single-instance Redis distributed lock pattern. It does **not** implement the multi-master [Redlock algorithm](https://redis.io/topics/distlock) which requires at least 3 independent Redis instances. If you need the fault tolerance of the full Redlock algorithm, you might want to look for other libraries.
+
+**NOTE:** This is a demonstration for my blog post [Distributed Lock with Redis](https://vinhphuoc.dev/en/posts/redlock). While it is working as intended, please understand that this package is not actively maintained.
 
 ## Installation
 
@@ -33,7 +35,19 @@ rdb := redis.NewClient(&redis.Options{
 })
 
 // Initialize Redlock
-dl := redlock.NewClient(rdb)
+dl := redlock.NewLock(rdb)
+```
+
+### Configuration
+
+You can configure the lock behavior using functional options:
+
+```go
+// Set custom retry limit (default is -1, which means infinite retry)
+dl := redlock.NewLock(rdb, redlock.SetMaxRetry(3))
+
+// Set custom jitter duration (default is 300ms)
+dl := redlock.NewLock(rdb, redlock.SetJitterDuration(500*time.Millisecond))
 ```
 
 ### Acquire a Lock

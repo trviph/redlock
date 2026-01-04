@@ -1,3 +1,6 @@
+// Package redlock provides a Redis-backed distributed lock implementation.
+// It is designed to work with a single Redis instance or cluster and is not a full implementation
+// of the multi-master Redlock algorithm.
 package redlock
 
 import (
@@ -16,14 +19,14 @@ type redisClient interface {
 	SetNX(ctx context.Context, key string, value any, expiration time.Duration) *redis.BoolCmd
 }
 
-type DistributedLock struct {
+type Lock struct {
 	rcli              redisClient
 	maxJitterDuration time.Duration
 	maxRetry          int
 }
 
-func NewClient(rcli redisClient, opts ...func(*DistributedLock)) *DistributedLock {
-	dl := &DistributedLock{
+func NewLock(rcli redisClient, opts ...func(*Lock)) *Lock {
+	dl := &Lock{
 		rcli:              rcli,
 		maxRetry:          -1,
 		maxJitterDuration: 300 * time.Millisecond,
@@ -35,7 +38,7 @@ func NewClient(rcli redisClient, opts ...func(*DistributedLock)) *DistributedLoc
 }
 
 // Acquire acquires a lock with a random uuid fencing value.
-func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Duration) (cmd *redis.BoolCmd, fencing string, err error) {
+func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (cmd *redis.BoolCmd, fencing string, err error) {
 	defer func() {
 		// This recover block is to handle panic from uuid.NewString()
 		// A failure to generate a uuid is not expected to happen,
@@ -53,7 +56,7 @@ func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Dur
 
 // AcquireOrExtend acquires a lock, if the fencing value matches, extends the lock.
 // If the lock does not exist, it attempts to acquire it.
-func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) (*redis.Cmd, error) {
+func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) (*redis.Cmd, error) {
 	retries := 0
 	for {
 		select {
@@ -89,7 +92,7 @@ func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key, fencing str
 }
 
 // AcquireWithFencing acquires a lock with a fencing value.
-func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) (*redis.BoolCmd, error) {
+func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) (*redis.BoolCmd, error) {
 	retries := 0
 	for {
 		select {
@@ -113,7 +116,7 @@ func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing 
 }
 
 // Release releases a lock with a fencing value.
-func (dl *DistributedLock) Release(ctx context.Context, key string, fencing string) error {
+func (dl *Lock) Release(ctx context.Context, key string, fencing string) error {
 	script := `
 	if redis.call("get", KEYS[1]) == ARGV[1] then
 		return redis.call("del", KEYS[1])

@@ -25,7 +25,7 @@ func TestRedlock_Acquire(t *testing.T) {
 	defer rdb.Close()
 	ctx := context.Background()
 
-	dl := redlock.NewClient(rdb)
+	dl := redlock.NewLock(rdb)
 	key := "test-lock-" + uuid.NewString()
 
 	// 1. Acquire successfully
@@ -70,7 +70,7 @@ func TestRedlock_AcquireOrExtend(t *testing.T) {
 	defer rdb.Close()
 	ctx := context.Background()
 
-	dl := redlock.NewClient(rdb)
+	dl := redlock.NewLock(rdb)
 	key := "test-extend-" + uuid.NewString()
 
 	// 1. Acquire
@@ -140,7 +140,7 @@ func TestRedlock_Release(t *testing.T) {
 	defer rdb.Close()
 	ctx := context.Background()
 
-	dl := redlock.NewClient(rdb)
+	dl := redlock.NewLock(rdb)
 	key := "test-release-" + uuid.NewString()
 
 	// 1. Acquire
