@@ -29,12 +29,9 @@ func TestRedlock_Acquire(t *testing.T) {
 	key := "test-lock-" + uuid.NewString()
 
 	// 1. Acquire successfully
-	cmd, fencing, err := dl.Acquire(ctx, key, 10*time.Second)
+	fencing, err := dl.Acquire(ctx, key, 10*time.Second)
 	if err != nil {
 		t.Fatalf("Acquire failed: %v", err)
-	}
-	if !cmd.Val() {
-		t.Errorf("Expected cmd.Val() to be true")
 	}
 	if fencing == "" {
 		t.Errorf("Expected fencing to be non-empty")
@@ -52,13 +49,9 @@ func TestRedlock_Acquire(t *testing.T) {
 	ctxTimeout, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 
-	cmd2, _, err2 := dl.Acquire(ctxTimeout, key, 10*time.Second)
+	_, err2 := dl.Acquire(ctxTimeout, key, 10*time.Second)
 	if err2 == nil {
 		t.Errorf("Expected acquire to timeout/fail when key locked, got success")
-	}
-	// We expect err2 to be context deadline exceeded usually, or check if cmd2 is nil/false.
-	if cmd2 != nil && cmd2.Val() {
-		t.Errorf("Should not have acquired lock")
 	}
 
 	// Cleanup
@@ -74,22 +67,15 @@ func TestRedlock_AcquireOrExtend(t *testing.T) {
 	key := "test-extend-" + uuid.NewString()
 
 	// 1. Acquire
-	_, fencing, err := dl.Acquire(ctx, key, 1*time.Second) // Short TTL
+	fencing, err := dl.Acquire(ctx, key, 1*time.Second) // Short TTL
 	if err != nil {
 		t.Fatalf("Acquire failed: %v", err)
 	}
 
 	// 2. Extend successfully
-	cmd, err := dl.AcquireOrExtend(ctx, key, fencing, 10*time.Second)
+	err = dl.AcquireOrExtend(ctx, key, fencing, 10*time.Second)
 	if err != nil {
 		t.Fatalf("AcquireOrExtend failed: %v", err)
-	}
-	if cmd == nil {
-		t.Fatal("Expected cmd to be not nil")
-	}
-	val, _ := cmd.Int64()
-	if val <= 0 {
-		t.Errorf("Expected positive result from AcquireOrExtend, got %v", val)
 	}
 
 	// Verify TTL checking
@@ -103,13 +89,9 @@ func TestRedlock_AcquireOrExtend(t *testing.T) {
 
 	// 3. Re-acquire successfully (simulate expiration/deletion)
 	rdb.Del(ctx, key)
-	cmd3, err3 := dl.AcquireOrExtend(ctx, key, fencing, 10*time.Second)
+	err3 := dl.AcquireOrExtend(ctx, key, fencing, 10*time.Second)
 	if err3 != nil {
 		t.Fatalf("AcquireOrExtend (re-acquire) failed: %v", err3)
-	}
-	val3, _ := cmd3.Int64()
-	if val3 <= 0 {
-		t.Errorf("Expected positive result from re-acquire, got %v", val3)
 	}
 	// Verify it exists again
 	if rdb.Exists(ctx, key).Val() != 1 {
@@ -123,7 +105,7 @@ func TestRedlock_AcquireOrExtend(t *testing.T) {
 	ctxTimeout, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 
-	_, err2 := dl.AcquireOrExtend(ctxTimeout, key, wrongFencing, 10*time.Second)
+	err2 := dl.AcquireOrExtend(ctxTimeout, key, wrongFencing, 10*time.Second)
 	if err2 == nil {
 		// Should timeout
 		// But strictly speaking Redlock returns nil, ctx.Err() on context done
@@ -144,7 +126,7 @@ func TestRedlock_Release(t *testing.T) {
 	key := "test-release-" + uuid.NewString()
 
 	// 1. Acquire
-	_, fencing, err := dl.Acquire(ctx, key, 10*time.Second)
+	fencing, err := dl.Acquire(ctx, key, 10*time.Second)
 	if err != nil {
 		t.Fatalf("Acquire failed: %v", err)
 	}
@@ -175,7 +157,7 @@ func TestRedlock_MinRetryDelay(t *testing.T) {
 	dlA := redlock.NewLock(rdb)
 	key := "test-min-wait-" + uuid.NewString()
 
-	_, _, err := dlA.Acquire(ctx, key, 10*time.Second)
+	_, err := dlA.Acquire(ctx, key, 10*time.Second)
 	if err != nil {
 		t.Fatalf("Client A failed to acquire: %v", err)
 	}
@@ -193,7 +175,7 @@ func TestRedlock_MinRetryDelay(t *testing.T) {
 	// 3. Retry #2 (which is > maxRetry 1) -> aborts
 	// Total wait time should be at least 2 * minWait.
 
-	_, _, errB := dlB.Acquire(ctx, key, 10*time.Second)
+	_, errB := dlB.Acquire(ctx, key, 10*time.Second)
 	elapsed := time.Since(start)
 
 	if errB == nil {

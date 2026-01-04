@@ -55,18 +55,17 @@ ctx := context.Background()
 key := "my-resource-lock"
 ttl := 10 * time.Second
 
-// cmd.Val() will be true if lock is acquired
-cmd, fencing, err := dl.Acquire(ctx, key, ttl)
+// err will be nil if lock is acquired
+fencing, err := dl.Acquire(ctx, key, ttl)
 if err != nil {
+    // Handle error (failed to acquire)
     panic(err)
 }
 
-if cmd.Val() {
-    // Lock acquired
-    defer dl.Release(ctx, key, fencing)
-    
-    // Do work...
-}
+// Lock acquired
+defer dl.Release(ctx, key, fencing)
+
+// Do work...
 ```
 
 ### Acquire or Extend a Lock
@@ -75,7 +74,7 @@ If your work takes longer than expected, or if you want to ensure you hold the l
 
 ```go
 // Extends the lock by another 10 seconds, or re-acquires it if missing
-cmd, err := dl.AcquireOrExtend(ctx, key, fencing, 10*time.Second)
+err := dl.AcquireOrExtend(ctx, key, fencing, 10*time.Second)
 if err != nil {
     // Handle error
 }

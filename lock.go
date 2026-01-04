@@ -41,36 +41,40 @@ func NewLock(rcli redisClient, opts ...func(*Lock)) *Lock {
 }
 
 // Acquire acquires a lock with a random uuid fencing value.
-func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (cmd *redis.BoolCmd, fencing string, err error) {
+// Acquire acquires a lock with a random uuid fencing value.
+// It returns the fencing token on success, or an error on failure.
+func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
 	defer func() {
 		// This recover block is to handle panic from uuid.NewString()
 		// A failure to generate a uuid is not expected to happen,
 		// but if it does, we want to handle it gracefully.
 		if r := recover(); r != nil {
-			cmd = nil
-			var ok bool
-			if err, ok = r.(error); !ok {
+			var typeOk bool
+			if err, typeOk = r.(error); !typeOk {
 				err = fmt.Errorf("panic: %v", r)
 			}
 		}
 	}()
 
 	fencing = uuid.NewString()
-	cmd, err = dl.AcquireWithFencing(ctx, key, fencing, ttl)
-	return cmd, fencing, err
+	err = dl.AcquireWithFencing(ctx, key, fencing, ttl)
+	return fencing, err
 }
 
 // AcquireOrExtend acquires a lock, if the fencing value matches, extends the lock.
 // If the lock does not exist, it attempts to acquire it.
-func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) (*redis.Cmd, error) {
+// AcquireOrExtend acquires a lock, if the fencing value matches, extends the lock.
+// If the lock does not exist, it attempts to acquire it.
+// It returns nil on success, or an error on failure.
+func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		default:
 			if retries > dl.maxRetry && dl.maxRetry >= 0 {
-				return nil, errors.New("max retry exceeded")
+				return errors.New("max retry exceeded")
 			}
 
 			script := `
@@ -84,11 +88,11 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 			`
 			cmd := dl.rcli.Eval(ctx, script, []string{key}, fencing, ttl.Milliseconds())
 			if cmd.Err() != nil {
-				return nil, cmd.Err()
+				return cmd.Err()
 			}
 			val, _ := cmd.Int64()
 			if val > 0 {
-				return cmd, nil
+				return nil
 			}
 			dl.waitRetry()
 			retries++
@@ -98,22 +102,23 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 }
 
 // AcquireWithFencing acquires a lock with a fencing value.
-func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) (*redis.BoolCmd, error) {
+// It returns nil on success, or an error on failure.
+func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return ctx.Err()
 		default:
 			if retries > dl.maxRetry && dl.maxRetry >= 0 {
-				return nil, errors.New("max retry exceeded")
+				return errors.New("max retry exceeded")
 			}
 			cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
 			if cmd.Err() != nil {
-				return nil, cmd.Err()
+				return cmd.Err()
 			}
 			if cmd.Val() {
-				return cmd, nil
+				return nil
 			}
 			dl.waitRetry()
 			retries++
