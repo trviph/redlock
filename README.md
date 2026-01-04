@@ -7,9 +7,7 @@
 
 Redlock is a distributed lock service implementation in Go backed by Redis. It provides a distributed lock for your application.
 
-> **Note**: This package implements the standard single-instance Redis distributed lock pattern. It does **not** implement the multi-master [Redlock algorithm](https://redis.io/topics/distlock) which requires at least 3 independent Redis instances. If you need the fault tolerance of the full Redlock algorithm, you might want to look for other libraries.
-
-**NOTE:** This is a demonstration for my blog post [Distributed Lock with Redis](https://vinhphuoc.dev/en/posts/redlock). While it is working as intended, please understand that this package is not actively maintained.
+> **Note**: This package implements the standard single-instance Redis distributed lock pattern. It does **not** implement the multi-master [Redlock algorithm](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/). If you need the fault tolerance of the full Redlock algorithm, you might want to look for other libraries.
 
 ## Installation
 
