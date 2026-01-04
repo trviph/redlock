@@ -37,9 +37,8 @@ func TestRedlock_Acquire(t *testing.T) {
 		t.Errorf("Expected fencing to be non-empty")
 	}
 
-	// 2. Fail to acquire same key (should fail immediately or retry? Acquire retries logic)
+	// 2. Fail to acquire same key
 	// Acquire loops until success or context cancel.
-
 	ctxTimeout, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 

@@ -95,7 +95,7 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-dl.waitRetry(retries):
 			if retries > dl.maxRetry && dl.maxRetry >= 0 {
 				return errors.New("max retry exceeded")
 			}
@@ -117,7 +117,6 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 			if val > 0 {
 				return nil
 			}
-			dl.waitRetry()
 			retries++
 		}
 	}
@@ -132,7 +131,7 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-dl.waitRetry(retries):
 			if retries > dl.maxRetry && dl.maxRetry >= 0 {
 				return errors.New("max retry exceeded")
 			}
@@ -143,7 +142,6 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 			if cmd.Val() {
 				return nil
 			}
-			dl.waitRetry()
 			retries++
 		}
 	}
@@ -161,6 +159,20 @@ func (dl *Lock) Release(ctx context.Context, key string, fencing string) error {
 	return dl.rcli.Eval(ctx, script, []string{key}, fencing).Err()
 }
 
-func (dl *Lock) waitRetry() {
-	time.Sleep(dl.minRetryDelay + time.Duration(rand.Int63n(int64(dl.maxJitterDuration))))
+var closedChan = make(chan time.Time)
+
+func init() {
+	close(closedChan)
+}
+
+func (dl *Lock) waitRetry(retries int) <-chan time.Time {
+	// IF retries == 0: It's the first attempt, so we should run immediately.
+	// IF retries > maxRetry: We have exceeded the max retry limit, so we should return immediately
+	// to let the loop handle the error.
+	// In both cases, we return a closed channel to unblock the select statement immediately.
+	if retries == 0 || (dl.maxRetry >= 0 && retries > dl.maxRetry) {
+		return closedChan
+	}
+	jitter := rand.Int63n(int64(dl.maxJitterDuration))
+	return time.After(dl.minRetryDelay + time.Duration(jitter))
 }
