@@ -5,9 +5,10 @@ package redlock
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"time"
 
 	"github.com/google/uuid"
@@ -173,6 +174,17 @@ func (dl *Lock) waitRetry(retries int) <-chan time.Time {
 	if retries == 0 || (dl.maxRetry >= 0 && retries > dl.maxRetry) {
 		return closedChan
 	}
-	jitter := rand.Int63n(int64(dl.maxJitterDuration))
-	return time.After(dl.minRetryDelay + time.Duration(jitter))
+
+	var jitter time.Duration
+	if dl.maxJitterDuration > 0 {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(dl.maxJitterDuration)))
+		if err != nil {
+			// If random generation fails, we default to the max jitter duration
+			// This ensures we still wait some time and don't break the loop.
+			jitter = dl.maxJitterDuration
+		} else {
+			jitter = time.Duration(n.Int64())
+		}
+	}
+	return time.After(dl.minRetryDelay + jitter)
 }

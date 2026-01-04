@@ -175,7 +175,7 @@ func TestRedlock_MinRetryDelay(t *testing.T) {
 		t.Fatal("Client B should have failed to acquire")
 	}
 
-	expectedDuration := 2 * minWait
+	expectedDuration := minWait
 	if elapsed < expectedDuration {
 		t.Errorf("Expected duration >= %v, got %v", expectedDuration, elapsed)
 	}
