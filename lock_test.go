@@ -158,7 +158,7 @@ func TestRedlock_MinRetryDelay(t *testing.T) {
 
 	// 2. Try with client B with min wait
 	minWait := 200 * time.Millisecond
-	dlB := redlock.NewLock(rdb, redlock.SetMinRetryDelay(minWait), redlock.SetMaxRetry(1))
+	dlB := redlock.NewLock(rdb, redlock.WithMinRetryDelay(minWait), redlock.WithMaxRetry(1))
 
 	start := time.Now()
 	// This is expected to fail.
