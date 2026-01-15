@@ -39,9 +39,13 @@ func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *Distribut
 // to successfully acquire the lock. If quorum is not reached, all acquired locks
 // are automatically released.
 //
+// The method also validates that the lock is still valid after acquisition by
+// checking that the elapsed time plus clock drift allowance is less than the TTL.
+//
 // Returns the fencing token on success, which must be passed to Release.
-// Returns an error if quorum cannot be achieved or context is cancelled.
+// Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
 func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
+	startTime := time.Now()
 	fencing = uuid.NewString()
 
 	var win atomic.Int32
@@ -69,7 +73,16 @@ func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Dur
 	}
 	wg.Wait()
 	close(errChan)
+
 	if win.Load() >= int32(len(dl.locks)/2+1) {
+		// Clock drift check: ensure the lock is still valid
+		// validity = TTL - elapsed - (TTL * drift_factor)
+		elapsed := time.Since(startTime)
+		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
+		validity := ttl - elapsed - drift
+		if validity <= 0 {
+			return "", fmt.Errorf("lock acquired but validity expired: elapsed %v, drift allowance %v, ttl %v", elapsed, drift, ttl)
+		}
 		return fencing, nil
 	}
 
