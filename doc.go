@@ -61,6 +61,7 @@
 //
 // The package exports sentinel errors for reliable error checking with [errors.Is]:
 //   - [ErrLockAlreadyHeld]: returned by TryAcquire when the lock is held by another client
+//   - [ErrLockNotHeld]: returned by TryExtend when the lock doesn't exist or fencing token doesn't match
 //   - [ErrMaxRetryExceeded]: returned when retry attempts are exhausted
 //   - [ErrValidityExpired]: returned when clock drift causes lock validity to expire
 //

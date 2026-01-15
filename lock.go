@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/google/uuid"
 	redis "github.com/redis/go-redis/v9"
 )
 
@@ -46,19 +45,10 @@ func NewLock(rcli redisClient, opts ...LockOption) *Lock {
 // Acquire acquires a lock with a random uuid fencing value.
 // It returns the fencing token on success, or an error on failure.
 func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
-	defer func() {
-		// This recover block is to handle panic from uuid.NewString()
-		// A failure to generate a uuid is not expected to happen,
-		// but if it does, we want to handle it gracefully.
-		if r := recover(); r != nil {
-			var typeOk bool
-			if err, typeOk = r.(error); !typeOk {
-				err = fmt.Errorf("panic: %v", r)
-			}
-		}
-	}()
-
-	fencing = uuid.NewString()
+	fencing, err = newFencingToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate fencing token: %w", err)
+	}
 	err = dl.AcquireWithFencing(ctx, key, fencing, ttl)
 	return fencing, err
 }
@@ -67,24 +57,28 @@ func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (fen
 // It returns the fencing token on success, or an error on failure.
 // If the lock is already held, it returns ErrLockAlreadyHeld.
 func (dl *Lock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			var typeOk bool
-			if err, typeOk = r.(error); !typeOk {
-				err = fmt.Errorf("panic: %v", r)
-			}
-		}
-	}()
-
-	fencing = uuid.NewString()
-	cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
-	if cmd.Err() != nil {
-		return "", cmd.Err()
+	fencing, err = newFencingToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate fencing token: %w", err)
 	}
-	if !cmd.Val() {
-		return "", ErrLockAlreadyHeld
+	err = dl.TryAcquireWithFencing(ctx, key, fencing, ttl)
+	if err != nil {
+		return "", err
 	}
 	return fencing, nil
+}
+
+// TryAcquireWithFencing attempts to acquire a lock exactly once with a provided fencing token.
+// Returns nil on success, or ErrLockAlreadyHeld if the lock is held.
+func (dl *Lock) TryAcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) error {
+	cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+	if !cmd.Val() {
+		return ErrLockAlreadyHeld
+	}
+	return nil
 }
 
 // AcquireOrExtend acquires a lock, if the fencing value matches, extends the lock.
@@ -138,24 +132,41 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 				return ErrMaxRetryExceeded
 			}
 
-			script := `
-				if redis.call("get", KEYS[1]) == ARGV[1] then
-					return redis.call("pexpire", KEYS[1], ARGV[2])
-				else
-					return 0
-				end
-			`
-			cmd := dl.rcli.Eval(ctx, script, []string{key}, fencing, ttl.Milliseconds())
-			if cmd.Err() != nil {
-				return cmd.Err()
-			}
-			val, _ := cmd.Int64()
-			if val > 0 {
+			err := dl.tryExtend(ctx, key, fencing, ttl)
+			if err == nil {
 				return nil
+			}
+			if err != ErrLockNotHeld {
+				return err
 			}
 			retries++
 		}
 	}
+}
+
+// TryExtend attempts to extend the TTL of an existing lock exactly once without retrying.
+// Returns nil on success, ErrLockNotHeld if the lock doesn't exist or fencing doesn't match.
+func (dl *Lock) TryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
+	return dl.tryExtend(ctx, key, fencing, ttl)
+}
+
+func (dl *Lock) tryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
+	script := `
+		if redis.call("get", KEYS[1]) == ARGV[1] then
+			return redis.call("pexpire", KEYS[1], ARGV[2])
+		else
+			return 0
+		end
+	`
+	cmd := dl.rcli.Eval(ctx, script, []string{key}, fencing, ttl.Milliseconds())
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+	val, _ := cmd.Int64()
+	if val > 0 {
+		return nil
+	}
+	return ErrLockNotHeld
 }
 
 // AcquireWithFencing acquires a lock with a fencing value.
@@ -192,12 +203,6 @@ func (dl *Lock) Release(ctx context.Context, key string, fencing string) error {
 	end
 	`
 	return dl.rcli.Eval(ctx, script, []string{key}, fencing).Err()
-}
-
-var closedChan = make(chan time.Time)
-
-func init() {
-	close(closedChan)
 }
 
 func (dl *Lock) waitRetry(retries int) <-chan time.Time {
