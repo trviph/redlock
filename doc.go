@@ -59,6 +59,6 @@
 //
 // # References
 //
-//   - Redis Redlock Algorithm: https://redis.io/docs/manual/patterns/distributed-locks/
+//   - Redis Redlock Algorithm: https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
 //   - Martin Kleppmann's Analysis: https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
 package redlock
