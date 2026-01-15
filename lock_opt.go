@@ -2,11 +2,12 @@ package redlock
 
 import "time"
 
+// LockOption configures a Lock instance.
 type LockOption func(*Lock)
 
-// Set a max jitter duration for the lock.
-// If the lock failed to acquire (due to network error, or the lock already taken)
-// the lock will be retried with a random jitter duration up to the max jitter duration.
+// WithJitterDuration sets the maximum jitter duration for retry backoff.
+// When a lock acquisition fails (due to the lock being held or network errors),
+// the retry delay will include a random jitter between 0 and this duration.
 // Default is 300 milliseconds.
 func WithJitterDuration(jitter time.Duration) LockOption {
 	return func(dl *Lock) {
@@ -14,19 +15,18 @@ func WithJitterDuration(jitter time.Duration) LockOption {
 	}
 }
 
-// Set a max retry count for the lock.
-// If the lock failed to acquire (due to network error, or the lock already taken)
-// the lock will be retried up to the max retry count.
-// Set to negative value to retry forever, this is the default behavior.
+// WithMaxRetry sets the maximum number of retry attempts for lock acquisition.
+// Set to a negative value (default) to retry indefinitely until context cancellation.
+// Set to 0 to disable retries (equivalent to TryAcquire behavior).
 func WithMaxRetry(maxRetry int) LockOption {
 	return func(dl *Lock) {
 		dl.maxRetry = maxRetry
 	}
 }
 
-// Set a min retry delay for the lock.
-// This is the minimum time to wait before retrying to acquire the lock.
-// Default is 0.
+// WithMinRetryDelay sets the minimum delay between retry attempts.
+// The actual delay will be this value plus a random jitter (see WithJitterDuration).
+// Default is 0 (only jitter delay).
 func WithMinRetryDelay(minDelay time.Duration) LockOption {
 	return func(dl *Lock) {
 		dl.minRetryDelay = minDelay

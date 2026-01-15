@@ -1,6 +1,3 @@
-// Package redlock provides a Redis-backed distributed lock implementation.
-// It is designed to work with a single Redis instance or cluster and is not a full implementation
-// of the multi-master Redlock algorithm.
 package redlock
 
 import (
@@ -15,12 +12,16 @@ import (
 	redis "github.com/redis/go-redis/v9"
 )
 
-// Redlock need these functionality from a Redis client.
+// redisClient defines the Redis operations required by Lock.
+// Both *redis.Client and *redis.ClusterClient satisfy this interface.
 type redisClient interface {
 	redis.Scripter
 	SetNX(ctx context.Context, key string, value any, expiration time.Duration) *redis.BoolCmd
 }
 
+// Lock provides a distributed lock backed by a single Redis instance.
+// It supports automatic retry with configurable backoff, atomic operations
+// via Lua scripts, and fencing tokens for safe lock ownership.
 type Lock struct {
 	rcli              redisClient
 	maxJitterDuration time.Duration
@@ -28,8 +29,8 @@ type Lock struct {
 	maxRetry          int
 }
 
-var ErrLockAlreadyHeld = errors.New("lock already held")
-
+// NewLock creates a new Lock backed by the given Redis client.
+// By default, the lock retries indefinitely with 300ms max jitter.
 func NewLock(rcli redisClient, opts ...LockOption) *Lock {
 	dl := &Lock{
 		rcli:              rcli,
@@ -82,7 +83,7 @@ func (dl *Lock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (
 		return "", cmd.Err()
 	}
 	if !cmd.Val() {
-		return "", ErrLockAlreadyHeld
+		return "", errors.New("lock already held")
 	}
 	return fencing, nil
 }
