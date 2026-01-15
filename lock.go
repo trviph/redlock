@@ -3,7 +3,6 @@ package redlock
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"math/big"
 	"time"
@@ -83,7 +82,7 @@ func (dl *Lock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (
 		return "", cmd.Err()
 	}
 	if !cmd.Val() {
-		return "", errors.New("lock already held")
+		return "", ErrLockAlreadyHeld
 	}
 	return fencing, nil
 }
@@ -99,7 +98,7 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 			return ctx.Err()
 		case <-dl.waitRetry(retries):
 			if retries > dl.maxRetry && dl.maxRetry >= 0 {
-				return errors.New("max retry exceeded")
+				return ErrMaxRetryExceeded
 			}
 
 			script := `
@@ -136,7 +135,7 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 			return ctx.Err()
 		case <-dl.waitRetry(retries):
 			if retries > dl.maxRetry && dl.maxRetry >= 0 {
-				return errors.New("max retry exceeded")
+				return ErrMaxRetryExceeded
 			}
 
 			script := `
@@ -169,7 +168,7 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 			return ctx.Err()
 		case <-dl.waitRetry(retries):
 			if retries > dl.maxRetry && dl.maxRetry >= 0 {
-				return errors.New("max retry exceeded")
+				return ErrMaxRetryExceeded
 			}
 			cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
 			if cmd.Err() != nil {

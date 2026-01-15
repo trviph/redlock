@@ -81,18 +81,16 @@ func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Dur
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
 		validity := ttl - elapsed - drift
 		if validity <= 0 {
-			return "", fmt.Errorf("lock acquired but validity expired: elapsed %v, drift allowance %v, ttl %v", elapsed, drift, ttl)
+			return "", fmt.Errorf("lock acquired but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
 		}
 		return fencing, nil
 	}
 
-	var finalError error
-	errCount := 0
+	errs := make([]error, 0, len(dl.locks))
 	for e := range errChan {
-		errCount++
-		finalError = e
+		errs = append(errs, e)
 	}
-	return "", fmt.Errorf("acquire failed on %d of %d instance(s), with one error as %w", errCount, len(dl.locks), finalError)
+	return "", fmt.Errorf("acquire failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
 }
 
 // Release releases the lock from all Redis instances.
@@ -113,14 +111,12 @@ func (dl *DistributedLock) Release(ctx context.Context, key string, fencing stri
 	wg.Wait()
 	close(errChan)
 
-	var finalError error
-	errCount := 0
+	errs := make([]error, 0, len(dl.locks))
 	for e := range errChan {
-		errCount++
-		finalError = e
+		errs = append(errs, e)
 	}
-	if finalError != nil {
-		return fmt.Errorf("release failed on %d of %d instance(s), with one error as %w", errCount, len(dl.locks), finalError)
+	if len(errs) > 0 {
+		return fmt.Errorf("release failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
 	}
 	return nil
 }
@@ -155,18 +151,16 @@ func (dl *DistributedLock) Extend(ctx context.Context, key string, fencing strin
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
 		validity := ttl - elapsed - drift
 		if validity <= 0 {
-			return fmt.Errorf("lock extended but validity expired: elapsed %v, drift allowance %v, ttl %v", elapsed, drift, ttl)
+			return fmt.Errorf("lock extended but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
 		}
 		return nil
 	}
 
-	var finalError error
-	errCount := 0
+	errs := make([]error, 0, len(dl.locks))
 	for e := range errChan {
-		errCount++
-		finalError = e
+		errs = append(errs, e)
 	}
-	return fmt.Errorf("extend failed on %d of %d instance(s), with one error as %w", errCount, len(dl.locks), finalError)
+	return fmt.Errorf("extend failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
 }
 
 // AcquireOrExtend acquires a new lock or extends an existing one if the fencing token matches.
@@ -200,16 +194,14 @@ func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key string, fenc
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
 		validity := ttl - elapsed - drift
 		if validity <= 0 {
-			return fmt.Errorf("lock acquired/extended but validity expired: elapsed %v, drift allowance %v, ttl %v", elapsed, drift, ttl)
+			return fmt.Errorf("lock acquired/extended but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
 		}
 		return nil
 	}
 
-	var finalError error
-	errCount := 0
+	errs := make([]error, 0, len(dl.locks))
 	for e := range errChan {
-		errCount++
-		finalError = e
+		errs = append(errs, e)
 	}
-	return fmt.Errorf("acquire or extend failed on %d of %d instance(s), with one error as %w", errCount, len(dl.locks), finalError)
+	return fmt.Errorf("acquire or extend failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
 }
