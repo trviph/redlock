@@ -7,6 +7,9 @@ var (
 	// ErrLockAlreadyHeld is returned by TryAcquire when the lock is held by another client.
 	ErrLockAlreadyHeld = errors.New("lock already held")
 
+	// ErrLockNotHeld is returned by TryExtend when the lock doesn't exist or fencing token doesn't match.
+	ErrLockNotHeld = errors.New("lock not held")
+
 	// ErrMaxRetryExceeded is returned when the maximum retry attempts have been exhausted.
 	ErrMaxRetryExceeded = errors.New("max retry exceeded")
 

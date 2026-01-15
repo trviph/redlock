@@ -1,5 +1,7 @@
 package redlock
 
+import "time"
+
 type DistributedLockOption func(*DistributedLock)
 
 // WithClockDriftFactor sets the clock drift factor for the distributed lock.
@@ -9,5 +11,14 @@ type DistributedLockOption func(*DistributedLock)
 func WithClockDriftFactor(factor float64) DistributedLockOption {
 	return func(dl *DistributedLock) {
 		dl.clockDriftFactor = factor
+	}
+}
+
+// WithReleaseTimeout sets the timeout for cleanup release operations.
+// When a lock acquisition fails, partially acquired locks are released
+// using this timeout. Default is 5 seconds.
+func WithReleaseTimeout(timeout time.Duration) DistributedLockOption {
+	return func(dl *DistributedLock) {
+		dl.releaseTimeout = timeout
 	}
 }

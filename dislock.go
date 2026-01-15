@@ -15,9 +15,14 @@ import (
 // across multiple independent Redis instances. It provides stronger guarantees
 // than a single-instance lock by requiring a quorum (N/2 + 1) of instances
 // to agree on lock ownership.
+//
+// BUG(trviph): The Extend method does not release partially-extended locks on
+// quorum failure. Unlike Acquire/TryAcquire/AcquireOrExtend, if Extend fails to
+// achieve quorum, the successfully extended instances remain locked until TTL expires.
 type DistributedLock struct {
 	locks            []*Lock
 	clockDriftFactor float64
+	releaseTimeout   time.Duration
 }
 
 // NewDistributedLock creates a new DistributedLock with the given Lock instances.
@@ -27,6 +32,7 @@ func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *Distribut
 	dl := &DistributedLock{
 		locks:            locks,
 		clockDriftFactor: 0.01, // 1% clock drift factor, as recommended by the Redlock paper
+		releaseTimeout:   5 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(dl)
@@ -67,7 +73,10 @@ func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing 
 
 	defer func() {
 		if err != nil {
-			if releaseErr := dl.Release(ctx, key, fencing); releaseErr != nil {
+			// Use a fresh context for cleanup to avoid issues if original context is cancelled
+			releaseCtx, cancel := context.WithTimeout(context.Background(), dl.releaseTimeout)
+			defer cancel()
+			if releaseErr := dl.Release(releaseCtx, key, fencing); releaseErr != nil {
 				err = errors.Join(err, fmt.Errorf("cleanup release also failed: %w", releaseErr))
 			}
 		}
@@ -113,15 +122,34 @@ func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing 
 //
 // Returns the fencing token on success, or ErrLockAlreadyHeld if quorum cannot be achieved.
 func (dl *DistributedLock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
+	fencing, err = newFencingToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate fencing token: %w", err)
+	}
+	err = dl.TryAcquireWithFencing(ctx, key, fencing, ttl)
+	if err != nil {
+		return "", err
+	}
+	return fencing, nil
+}
+
+// TryAcquireWithFencing attempts to acquire the lock exactly once with a provided fencing token
+// across all Redis instances without retrying. It requires a quorum (N/2 + 1) of instances
+// to successfully acquire the lock. If quorum is not reached, all acquired locks are automatically released.
+//
+// Returns nil on success, or ErrLockAlreadyHeld if quorum cannot be achieved.
+func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) (err error) {
 	startTime := time.Now()
-	fencing = uuid.NewString()
 
 	var win atomic.Int32
 	var wg sync.WaitGroup
 
 	defer func() {
 		if err != nil {
-			if releaseErr := dl.Release(ctx, key, fencing); releaseErr != nil {
+			// Use a fresh context for cleanup to avoid issues if original context is cancelled
+			releaseCtx, cancel := context.WithTimeout(context.Background(), dl.releaseTimeout)
+			defer cancel()
+			if releaseErr := dl.Release(releaseCtx, key, fencing); releaseErr != nil {
 				err = errors.Join(err, fmt.Errorf("cleanup release also failed: %w", releaseErr))
 			}
 		}
@@ -132,7 +160,7 @@ func (dl *DistributedLock) TryAcquire(ctx context.Context, key string, ttl time.
 		wg.Add(1)
 		go func(lock *Lock) {
 			defer wg.Done()
-			if _, err := lock.TryAcquire(ctx, key, ttl); err != nil {
+			if err := lock.TryAcquireWithFencing(ctx, key, fencing, ttl); err != nil {
 				errChan <- err
 				return
 			}
@@ -148,12 +176,12 @@ func (dl *DistributedLock) TryAcquire(ctx context.Context, key string, ttl time.
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
 		validity := ttl - elapsed - drift
 		if validity <= 0 {
-			return "", fmt.Errorf("lock acquired but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
+			return fmt.Errorf("lock acquired but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
 		}
-		return fencing, nil
+		return nil
 	}
 
-	return "", ErrLockAlreadyHeld
+	return ErrLockAlreadyHeld
 }
 
 // Release releases the lock from all Redis instances.
@@ -226,6 +254,43 @@ func (dl *DistributedLock) Extend(ctx context.Context, key string, fencing strin
 	return fmt.Errorf("extend failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
 }
 
+// TryExtend attempts to extend the TTL of an existing lock exactly once across all Redis instances.
+// Requires a quorum (N/2 + 1) of instances to successfully extend the lock.
+// Returns nil on success, ErrLockNotHeld if quorum cannot be achieved.
+func (dl *DistributedLock) TryExtend(ctx context.Context, key string, fencing string, ttl time.Duration) error {
+	startTime := time.Now()
+	var win atomic.Int32
+	var wg sync.WaitGroup
+
+	errChan := make(chan error, len(dl.locks))
+	for _, lock := range dl.locks {
+		wg.Add(1)
+		go func(lock *Lock) {
+			defer wg.Done()
+			if err := lock.TryExtend(ctx, key, fencing, ttl); err != nil {
+				errChan <- err
+				return
+			}
+			win.Add(1)
+		}(lock)
+	}
+	wg.Wait()
+	close(errChan)
+
+	if win.Load() >= int32(len(dl.locks)/2+1) {
+		// Clock drift check: ensure the lock is still valid
+		elapsed := time.Since(startTime)
+		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
+		validity := ttl - elapsed - drift
+		if validity <= 0 {
+			return fmt.Errorf("lock extended but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
+		}
+		return nil
+	}
+
+	return ErrLockNotHeld
+}
+
 // AcquireOrExtend acquires a new lock or extends an existing one if the fencing token matches.
 // It attempts the operation across all Redis instances concurrently and requires a quorum
 // (N/2 + 1) of instances to succeed.
@@ -238,7 +303,10 @@ func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key string, fenc
 
 	defer func() {
 		if err != nil {
-			if releaseErr := dl.Release(ctx, key, fencing); releaseErr != nil {
+			// Use a fresh context for cleanup to avoid issues if original context is cancelled
+			releaseCtx, cancel := context.WithTimeout(context.Background(), dl.releaseTimeout)
+			defer cancel()
+			if releaseErr := dl.Release(releaseCtx, key, fencing); releaseErr != nil {
 				err = errors.Join(err, fmt.Errorf("cleanup release also failed: %w", releaseErr))
 			}
 		}
