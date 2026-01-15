@@ -136,9 +136,6 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 			if err == nil {
 				return nil
 			}
-			if err != ErrLockNotHeld {
-				return err
-			}
 			retries++
 		}
 	}

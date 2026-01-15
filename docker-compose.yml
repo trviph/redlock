@@ -1,5 +1,15 @@
 services:
-  redis:
+  redis1:
     image: redis:alpine
     ports:
       - "6379:6379"
+
+  redis2:
+    image: redis:alpine
+    ports:
+      - "6380:6379"
+
+  redis3:
+    image: redis:alpine
+    ports:
+      - "6381:6379"

@@ -7,8 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // DistributedLock implements the Redlock algorithm for distributed locking
@@ -51,7 +49,10 @@ func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *Distribut
 // Returns the fencing token on success, which must be passed to Release.
 // Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
 func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
-	fencing = uuid.NewString()
+	fencing, err = newFencingToken()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate fencing token: %w", err)
+	}
 	err = dl.AcquireWithFencing(ctx, key, fencing, ttl)
 	return fencing, err
 }

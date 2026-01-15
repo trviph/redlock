@@ -11,18 +11,21 @@ import (
 	"github.com/trviph/redlock"
 )
 
-func setupRedis(t *testing.T) *redis.Client {
+func setupRedis(t *testing.T, port string) *redis.Client {
+	if port == "" {
+		port = "6379"
+	}
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: "127.0.0.1:" + port,
 	})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		t.Skipf("Redis is not available: %v", err)
+		t.Skipf("Redis on port %s is not available: %v", port, err)
 	}
 	return rdb
 }
 
 func TestRedlock_Acquire(t *testing.T) {
-	rdb := setupRedis(t)
+	rdb := setupRedis(t, "6379")
 	defer rdb.Close()
 	ctx := context.Background()
 
@@ -53,7 +56,7 @@ func TestRedlock_Acquire(t *testing.T) {
 }
 
 func TestRedlock_AcquireOrExtend(t *testing.T) {
-	rdb := setupRedis(t)
+	rdb := setupRedis(t, "6379")
 	defer rdb.Close()
 	ctx := context.Background()
 
@@ -112,7 +115,7 @@ func TestRedlock_AcquireOrExtend(t *testing.T) {
 }
 
 func TestRedlock_Release(t *testing.T) {
-	rdb := setupRedis(t)
+	rdb := setupRedis(t, "6379")
 	defer rdb.Close()
 	ctx := context.Background()
 
@@ -143,7 +146,7 @@ func TestRedlock_Release(t *testing.T) {
 }
 
 func TestRedlock_MinRetryDelay(t *testing.T) {
-	rdb := setupRedis(t)
+	rdb := setupRedis(t, "6379")
 	defer rdb.Close()
 	ctx := context.Background()
 
@@ -183,7 +186,7 @@ func TestRedlock_MinRetryDelay(t *testing.T) {
 }
 
 func TestRedlock_TryAcquire(t *testing.T) {
-	rdb := setupRedis(t)
+	rdb := setupRedis(t, "6379")
 	defer rdb.Close()
 	ctx := context.Background()
 
