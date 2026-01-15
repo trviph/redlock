@@ -11,11 +11,18 @@ import (
 	"github.com/google/uuid"
 )
 
+// DistributedLock implements the Redlock algorithm for distributed locking
+// across multiple independent Redis instances. It provides stronger guarantees
+// than a single-instance lock by requiring a quorum (N/2 + 1) of instances
+// to agree on lock ownership.
 type DistributedLock struct {
 	locks            []*Lock
 	clockDriftFactor float64
 }
 
+// NewDistributedLock creates a new DistributedLock with the given Lock instances.
+// Each Lock should be connected to an independent Redis instance.
+// For optimal fault tolerance, use an odd number of instances (e.g., 3, 5, or 7).
 func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *DistributedLock {
 	dl := &DistributedLock{
 		locks:            locks,
@@ -27,6 +34,13 @@ func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *Distribut
 	return dl
 }
 
+// Acquire attempts to acquire the lock across all Redis instances concurrently.
+// It generates a unique fencing token and requires a quorum (N/2 + 1) of instances
+// to successfully acquire the lock. If quorum is not reached, all acquired locks
+// are automatically released.
+//
+// Returns the fencing token on success, which must be passed to Release.
+// Returns an error if quorum cannot be achieved or context is cancelled.
 func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
 	fencing = uuid.NewString()
 
