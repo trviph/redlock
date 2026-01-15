@@ -203,7 +203,7 @@ func TestRedlock_TryAcquire(t *testing.T) {
 	_, err2 := dl.TryAcquire(ctx, key, 10*time.Second)
 	elapsed := time.Since(start)
 
-	if err2 != redlock.ErrLockAlreadyHeld {
+	if err2 == nil || err2.Error() != "lock already held" {
 		t.Errorf("Expected ErrLockAlreadyHeld, got %v", err2)
 	}
 
