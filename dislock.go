@@ -124,3 +124,92 @@ func (dl *DistributedLock) Release(ctx context.Context, key string, fencing stri
 	}
 	return nil
 }
+
+// Extend extends the TTL of an existing lock across all Redis instances concurrently.
+// Requires a quorum (N/2 + 1) of instances to successfully extend the lock.
+// Also validates that the lock is still valid after extension by checking clock drift.
+// Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
+func (dl *DistributedLock) Extend(ctx context.Context, key string, fencing string, ttl time.Duration) error {
+	startTime := time.Now()
+	var win atomic.Int32
+	var wg sync.WaitGroup
+
+	errChan := make(chan error, len(dl.locks))
+	for _, lock := range dl.locks {
+		wg.Add(1)
+		go func(lock *Lock) {
+			defer wg.Done()
+			if err := lock.Extend(ctx, key, fencing, ttl); err != nil {
+				errChan <- err
+				return
+			}
+			win.Add(1)
+		}(lock)
+	}
+	wg.Wait()
+	close(errChan)
+
+	if win.Load() >= int32(len(dl.locks)/2+1) {
+		// Clock drift check: ensure the lock is still valid
+		elapsed := time.Since(startTime)
+		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
+		validity := ttl - elapsed - drift
+		if validity <= 0 {
+			return fmt.Errorf("lock extended but validity expired: elapsed %v, drift allowance %v, ttl %v", elapsed, drift, ttl)
+		}
+		return nil
+	}
+
+	var finalError error
+	errCount := 0
+	for e := range errChan {
+		errCount++
+		finalError = e
+	}
+	return fmt.Errorf("extend failed on %d of %d instance(s), with one error as %w", errCount, len(dl.locks), finalError)
+}
+
+// AcquireOrExtend acquires a new lock or extends an existing one if the fencing token matches.
+// It attempts the operation across all Redis instances concurrently and requires a quorum
+// (N/2 + 1) of instances to succeed.
+// Also validates that the lock is still valid after the operation by checking clock drift.
+// Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
+func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key string, fencing string, ttl time.Duration) error {
+	startTime := time.Now()
+	var win atomic.Int32
+	var wg sync.WaitGroup
+
+	errChan := make(chan error, len(dl.locks))
+	for _, lock := range dl.locks {
+		wg.Add(1)
+		go func(lock *Lock) {
+			defer wg.Done()
+			if err := lock.AcquireOrExtend(ctx, key, fencing, ttl); err != nil {
+				errChan <- err
+				return
+			}
+			win.Add(1)
+		}(lock)
+	}
+	wg.Wait()
+	close(errChan)
+
+	if win.Load() >= int32(len(dl.locks)/2+1) {
+		// Clock drift check: ensure the lock is still valid
+		elapsed := time.Since(startTime)
+		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
+		validity := ttl - elapsed - drift
+		if validity <= 0 {
+			return fmt.Errorf("lock acquired/extended but validity expired: elapsed %v, drift allowance %v, ttl %v", elapsed, drift, ttl)
+		}
+		return nil
+	}
+
+	var finalError error
+	errCount := 0
+	for e := range errChan {
+		errCount++
+		finalError = e
+	}
+	return fmt.Errorf("acquire or extend failed on %d of %d instance(s), with one error as %w", errCount, len(dl.locks), finalError)
+}
