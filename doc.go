@@ -57,6 +57,13 @@
 //   - [Lock]: [WithMaxRetry], [WithJitterDuration], [WithMinRetryDelay]
 //   - [DistributedLock]: [WithClockDriftFactor]
 //
+// # Sentinel Errors
+//
+// The package exports sentinel errors for reliable error checking with [errors.Is]:
+//   - [ErrLockAlreadyHeld]: returned by TryAcquire when the lock is held by another client
+//   - [ErrMaxRetryExceeded]: returned when retry attempts are exhausted
+//   - [ErrValidityExpired]: returned when clock drift causes lock validity to expire
+//
 // # References
 //
 //   - Redis Redlock Algorithm: https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/

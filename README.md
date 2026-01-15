@@ -5,9 +5,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/trviph/redlock.svg)](https://pkg.go.dev/github.com/trviph/redlock)
 
 
-Redlock is a distributed lock service implementation in Go backed by Redis. It provides a distributed lock for your application.
-
-> **Note**: This package implements the standard single-instance Redis distributed lock pattern. It does **not** implement the multi-master [Redlock algorithm](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/). If you need the fault tolerance of the full Redlock algorithm, you might want to look for other libraries.
+Redlock is a distributed lock service implementation in Go backed by Redis. It provides both single-instance and multi-instance (Redlock algorithm) distributed locks.
 
 ## Installation
 
@@ -42,10 +40,10 @@ You can configure the lock behavior using functional options:
 
 ```go
 // Set custom retry limit (default is -1, which means infinite retry)
-dl := redlock.NewLock(rdb, redlock.SetMaxRetry(3))
+lock := redlock.NewLock(rdb, redlock.WithMaxRetry(3))
 
 // Set custom jitter duration (default is 300ms)
-dl := redlock.NewLock(rdb, redlock.SetJitterDuration(500*time.Millisecond))
+lock := redlock.NewLock(rdb, redlock.WithJitterDuration(500*time.Millisecond))
 ```
 
 ### Acquire a Lock
@@ -73,9 +71,9 @@ defer dl.Release(ctx, key, fencing)
 If you want to attempt to acquire the lock exactly once without any retries (fail fast), use `TryAcquire`.
 
 ```go
-fencing, err := dl.TryAcquire(ctx, key, ttl)
+fencing, err := lock.TryAcquire(ctx, key, ttl)
 if err != nil {
-    if err == redlock.ErrLockAlreadyHeld {
+    if errors.Is(err, redlock.ErrLockAlreadyHeld) {
         // Lock is already taken
     } else {
         // Error (e.g. Redis connection)
@@ -98,7 +96,71 @@ if err != nil {
 ### Release a Lock
 
 ```go
-err := dl.Release(ctx, key, fencing)
+err := lock.Release(ctx, key, fencing)
+```
+
+## DistributedLock (Multi-Instance Redlock)
+
+For higher availability, use `DistributedLock` which implements the [Redlock algorithm](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/) across multiple independent Redis instances.
+
+### Setup
+
+```go
+// Connect to multiple independent Redis instances
+redis1 := redis.NewClient(&redis.Options{Addr: "redis1:6379"})
+redis2 := redis.NewClient(&redis.Options{Addr: "redis2:6379"})
+redis3 := redis.NewClient(&redis.Options{Addr: "redis3:6379"})
+
+// Create individual locks for each instance
+locks := []*redlock.Lock{
+    redlock.NewLock(redis1),
+    redlock.NewLock(redis2),
+    redlock.NewLock(redis3),
+}
+
+// Create distributed lock with quorum-based consensus
+dl := redlock.NewDistributedLock(locks,
+    redlock.WithClockDriftFactor(0.01), // 1% clock drift (default)
+)
+```
+
+### Usage
+
+The API mirrors `Lock` for consistency:
+
+```go
+// Acquire with retry
+fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
+if err != nil {
+    // Failed to achieve quorum
+}
+defer dl.Release(ctx, "my-resource", fencing)
+
+// Try acquire (no retry, fail fast)
+fencing, err := dl.TryAcquire(ctx, "my-resource", 30*time.Second)
+if errors.Is(err, redlock.ErrLockAlreadyHeld) {
+    // Could not achieve quorum
+}
+
+// Extend or re-acquire
+err := dl.AcquireOrExtend(ctx, "my-resource", fencing, 30*time.Second)
+```
+
+## Sentinel Errors
+
+The package exports sentinel errors for reliable error checking:
+
+```go
+import "errors"
+
+// Check if lock is already held
+if errors.Is(err, redlock.ErrLockAlreadyHeld) { ... }
+
+// Check if max retries exceeded
+if errors.Is(err, redlock.ErrMaxRetryExceeded) { ... }
+
+// Check if lock validity expired (clock drift)
+if errors.Is(err, redlock.ErrValidityExpired) { ... }
 ```
 
 ## Testing
