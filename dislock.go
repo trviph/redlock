@@ -12,13 +12,19 @@ import (
 )
 
 type DistributedLock struct {
-	locks []*Lock
+	locks            []*Lock
+	clockDriftFactor float64
 }
 
 func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *DistributedLock {
-	return &DistributedLock{
-		locks: locks,
+	dl := &DistributedLock{
+		locks:            locks,
+		clockDriftFactor: 0.01, // 1% clock drift factor, as recommended by the Redlock paper
 	}
+	for _, opt := range opts {
+		opt(dl)
+	}
+	return dl
 }
 
 func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
