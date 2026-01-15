@@ -122,7 +122,41 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 			retries++
 		}
 	}
+}
 
+// Extend extends the TTL of an existing lock if the fencing token matches.
+// Unlike AcquireOrExtend, this will not attempt to acquire if the lock doesn't exist.
+// Returns nil on success, or an error if the lock doesn't exist, fencing doesn't match,
+// or max retries exceeded.
+func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Duration) error {
+	retries := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-dl.waitRetry(retries):
+			if retries > dl.maxRetry && dl.maxRetry >= 0 {
+				return errors.New("max retry exceeded")
+			}
+
+			script := `
+				if redis.call("get", KEYS[1]) == ARGV[1] then
+					return redis.call("pexpire", KEYS[1], ARGV[2])
+				else
+					return 0
+				end
+			`
+			cmd := dl.rcli.Eval(ctx, script, []string{key}, fencing, ttl.Milliseconds())
+			if cmd.Err() != nil {
+				return cmd.Err()
+			}
+			val, _ := cmd.Int64()
+			if val > 0 {
+				return nil
+			}
+			retries++
+		}
+	}
 }
 
 // AcquireWithFencing acquires a lock with a fencing value.
