@@ -4,34 +4,31 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/trviph/redlock"
 )
 
-// TestLock_ConcurrentAcquire tests that concurrent Acquire calls
-// result in exactly one winner.
 func TestLock_ConcurrentAcquire(t *testing.T) {
-	rdb := setupRedis(t, "6379")
+	// Setup
+	rdb := setupRedis(t, testRedisPort1)
 	ctx := context.Background()
 	key := "test-concurrent-" + uuid.NewString()
 	t.Cleanup(func() { rdb.Del(ctx, key) })
 
-	const numClients = 10
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	winners := 0
-	fencingTokens := make([]string, 0)
+	fencingTokens := make([]string, 0, testConcurrentClientsMed)
 
-	// Use a short timeout so losers fail quickly
-	ctxTimeout, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	ctxTimeout, cancel := context.WithTimeout(ctx, testTimeoutMedium)
 	defer cancel()
 
-	for range numClients {
+	// Run
+	for range testConcurrentClientsMed {
 		wg.Go(func() {
 			dl := redlock.NewLock(rdb)
-			fencing, err := dl.Acquire(ctxTimeout, key, 10*time.Second)
+			fencing, err := dl.Acquire(ctxTimeout, key, testTTLLong)
 			if err == nil {
 				mu.Lock()
 				winners++
@@ -40,24 +37,24 @@ func TestLock_ConcurrentAcquire(t *testing.T) {
 			}
 		})
 	}
-
 	wg.Wait()
 
-	if winners != 1 {
-		t.Errorf("Expected exactly 1 winner, got %d", winners)
+	// Assert
+	if winners != testExpectedWinners {
+		t.Errorf("Expected exactly %d winner(s) from %d clients, got %d",
+			testExpectedWinners, testConcurrentClientsMed, winners)
 	}
-
-	if len(fencingTokens) != 1 {
-		t.Errorf("Expected 1 fencing token, got %d", len(fencingTokens))
+	if len(fencingTokens) != testExpectedWinners {
+		t.Errorf("Expected %d fencing token(s), got %d",
+			testExpectedWinners, len(fencingTokens))
 	}
 }
 
-// TestDistributedLock_ConcurrentAcquire tests that concurrent Acquire calls
-// across multiple Redis instances result in exactly one winner.
 func TestDistributedLock_ConcurrentAcquire(t *testing.T) {
-	rdb1 := setupRedis(t, "6379")
-	rdb2 := setupRedis(t, "6380")
-	rdb3 := setupRedis(t, "6381")
+	// Setup
+	rdb1 := setupRedis(t, testRedisPort1)
+	rdb2 := setupRedis(t, testRedisPort2)
+	rdb3 := setupRedis(t, testRedisPort3)
 
 	ctx := context.Background()
 	key := "dist-concurrent-" + uuid.NewString()
@@ -67,17 +64,16 @@ func TestDistributedLock_ConcurrentAcquire(t *testing.T) {
 		rdb3.Del(ctx, key)
 	})
 
-	const numClients = 5
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	winners := 0
-	fencingTokens := make([]string, 0)
+	fencingTokens := make([]string, 0, testConcurrentClientsSmall)
 
-	// Use a short timeout so losers fail quickly
-	ctxTimeout, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	ctxTimeout, cancel := context.WithTimeout(ctx, testTimeoutMedium)
 	defer cancel()
 
-	for range numClients {
+	// Run
+	for range testConcurrentClientsSmall {
 		wg.Go(func() {
 			locks := []*redlock.Lock{
 				redlock.NewLock(rdb1),
@@ -85,7 +81,7 @@ func TestDistributedLock_ConcurrentAcquire(t *testing.T) {
 				redlock.NewLock(rdb3),
 			}
 			dl := redlock.NewDistributedLock(locks)
-			fencing, err := dl.Acquire(ctxTimeout, key, 10*time.Second)
+			fencing, err := dl.Acquire(ctxTimeout, key, testTTLLong)
 			if err == nil {
 				mu.Lock()
 				winners++
@@ -94,14 +90,15 @@ func TestDistributedLock_ConcurrentAcquire(t *testing.T) {
 			}
 		})
 	}
-
 	wg.Wait()
 
-	if winners != 1 {
-		t.Errorf("Expected exactly 1 winner, got %d", winners)
+	// Assert
+	if winners != testExpectedWinners {
+		t.Errorf("Expected exactly %d winner(s) from %d clients, got %d",
+			testExpectedWinners, testConcurrentClientsSmall, winners)
 	}
-
-	if len(fencingTokens) != 1 {
-		t.Errorf("Expected 1 fencing token, got %d", len(fencingTokens))
+	if len(fencingTokens) != testExpectedWinners {
+		t.Errorf("Expected %d fencing token(s), got %d",
+			testExpectedWinners, len(fencingTokens))
 	}
 }
