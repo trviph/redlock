@@ -166,7 +166,7 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 
 // Release releases the lock from all Redis instances.
 // Returns an error if at least one release failed, aggregating the error count.
-func (dl *DistributedLock) Release(ctx context.Context, key string, fencing string) error {
+func (dl *DistributedLock) Release(ctx context.Context, key, fencing string) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(dl.locks))
 
@@ -198,7 +198,7 @@ func (dl *DistributedLock) Release(ctx context.Context, key string, fencing stri
 // success, context cancellation, or max retries exceeded.
 //
 // Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
-func (dl *DistributedLock) Extend(ctx context.Context, key string, fencing string, ttl time.Duration) error {
+func (dl *DistributedLock) Extend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
 		select {
@@ -224,7 +224,7 @@ func (dl *DistributedLock) Extend(ctx context.Context, key string, fencing strin
 // TryExtend attempts to extend the TTL of an existing lock exactly once across all Redis instances.
 // Requires a quorum (N/2 + 1) of instances to successfully extend the lock.
 // Returns nil on success, ErrLockNotHeld if quorum cannot be achieved.
-func (dl *DistributedLock) TryExtend(ctx context.Context, key string, fencing string, ttl time.Duration) error {
+func (dl *DistributedLock) TryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	startTime := time.Now()
 	var win atomic.Int32
 	var wg sync.WaitGroup
@@ -266,7 +266,7 @@ func (dl *DistributedLock) TryExtend(ctx context.Context, key string, fencing st
 // If you need to preserve an existing lock on failure, use [DistributedLock.TryExtend] instead.
 //
 // Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
-func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key string, fencing string, ttl time.Duration) (err error) {
+func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) (err error) {
 	startTime := time.Now()
 	var win atomic.Int32
 	var wg sync.WaitGroup

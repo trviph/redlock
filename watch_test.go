@@ -36,7 +36,7 @@ func TestWatch(t *testing.T) {
 		var wg sync.WaitGroup
 		for range testConcurrentContention {
 			wg.Go(func() {
-				if _, err := locker.TryAcquire(ctx, key, ttl); err == nil {
+				if _, tryErr := locker.TryAcquire(ctx, key, ttl); tryErr == nil {
 					t.Errorf("Concurrent TryAcquire succeeded but should have failed")
 				}
 			})

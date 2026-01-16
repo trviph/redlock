@@ -165,6 +165,6 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 }
 
 // Release releases a lock with a fencing value.
-func (dl *Lock) Release(ctx context.Context, key string, fencing string) error {
+func (dl *Lock) Release(ctx context.Context, key, fencing string) error {
 	return runScript(ctx, dl.rcli, scriptRelease, shaRelease, []string{key}, fencing).Err()
 }
