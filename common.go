@@ -1,12 +1,34 @@
 package redlock
 
 import (
+	"context"
 	"crypto/rand"
 	"math/big"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// Watch starts a watchdog goroutine that periodically extends the lock's TTL.
+// It is designed to be used for long-running operations where the duration is unknown.
+// The watchdog stops when the provided context is canceled.
+//
+// WARNING: Do not use context.Background() without a cancel mechanism (e.g. WithCancel),
+// otherwise the watchdog will never terminate.
+func Watch(ctx context.Context, locker Locker, key, fencing string, ttl time.Duration) {
+	go func() {
+		ticker := time.NewTicker(ttl / 2)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = locker.TryExtend(ctx, key, fencing, ttl)
+			}
+		}
+	}()
+}
 
 // closedChan is used to immediately unblock select statements
 // for first attempts or when max retries are exceeded.

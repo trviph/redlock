@@ -108,6 +108,8 @@ The API mirrors `Lock` for consistency (`Acquire`, `TryAcquire`, `Extend`, `TryE
 
 > **Note:** Use an odd number of instances (3, 5, 7) for optimal fault tolerance.
 
+---
+
 ### Watchdog Pattern (Auto-Renewal)
 
 For long-running operations where duration is unknown, use a watchdog goroutine to periodically extend the lock. This pattern works with both `Lock` and `DistributedLock`:
@@ -132,6 +134,25 @@ go func() {
 }()
 
 // Do long-running work...
+lock.Release(ctx, key, fencing)
+```
+
+Alternatively, you can use the built-in `Watch` helper which simplifies this pattern:
+
+```go
+fencing, err := lock.Acquire(ctx, key, ttl)
+if err != nil {
+    // Handle error
+}
+
+watchCtx, watchCancel := context.WithCancel(ctx)
+defer watchCancel()
+
+redlock.Watch(watchCtx, lock, key, fencing, ttl)
+
+// Do long-running work...
+
+watchCancel() // Stop the watchdog
 lock.Release(ctx, key, fencing)
 ```
 
