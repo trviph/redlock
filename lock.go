@@ -117,7 +117,7 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 				return ErrMaxRetryExceeded
 			}
 
-			err := dl.tryExtend(ctx, key, fencing, ttl)
+			err := dl.TryExtend(ctx, key, fencing, ttl)
 			if err == nil {
 				return nil
 			}
@@ -129,10 +129,6 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 // TryExtend attempts to extend the TTL of an existing lock exactly once without retrying.
 // Returns nil on success, ErrLockNotHeld if the lock doesn't exist or fencing doesn't match.
 func (dl *Lock) TryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
-	return dl.tryExtend(ctx, key, fencing, ttl)
-}
-
-func (dl *Lock) tryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	cmd := runScript(ctx, dl.rcli, scriptExtend, shaExtend, []string{key}, fencing, ttl.Milliseconds())
 	if cmd.Err() != nil {
 		return cmd.Err()
