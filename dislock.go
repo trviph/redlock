@@ -14,8 +14,8 @@ import (
 // than a single-instance lock by requiring a quorum (N/2 + 1) of instances
 // to agree on lock ownership.
 //
-// BUG(trviph): The Extend method does not release partially-extended locks on
-// quorum failure. Unlike Acquire/TryAcquire/AcquireOrExtend, if Extend fails to
+// BUG(trviph): The Extend and TryExtend methods do not release partially-extended locks on
+// quorum failure. Unlike Acquire/TryAcquire/AcquireOrExtend, if Extend/TryExtend fails to
 // achieve quorum, the successfully extended instances remain locked until TTL expires.
 type DistributedLock struct {
 	locks            []*Lock
@@ -260,6 +260,11 @@ func (dl *DistributedLock) TryExtend(ctx context.Context, key string, fencing st
 // It attempts the operation across all Redis instances concurrently and requires a quorum
 // (N/2 + 1) of instances to succeed.
 // Also validates that the lock is still valid after the operation by checking clock drift.
+//
+// WARNING: On failure (quorum not achieved or clock drift expired), this method releases ALL
+// locks across ALL instances, including any locks that were already held before this call.
+// If you need to preserve an existing lock on failure, use [DistributedLock.TryExtend] instead.
+//
 // Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
 func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key string, fencing string, ttl time.Duration) (err error) {
 	startTime := time.Now()
