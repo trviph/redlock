@@ -139,15 +139,13 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 
 	errChan := make(chan error, len(dl.locks))
 	for _, lock := range dl.locks {
-		wg.Add(1)
-		go func(lock *Lock) {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := lock.TryAcquireWithFencing(ctx, key, fencing, ttl); err != nil {
 				errChan <- err
 				return
 			}
 			win.Add(1)
-		}(lock)
+		})
 	}
 	wg.Wait()
 	close(errChan)
@@ -173,13 +171,11 @@ func (dl *DistributedLock) Release(ctx context.Context, key string, fencing stri
 	errChan := make(chan error, len(dl.locks))
 
 	for _, lock := range dl.locks {
-		wg.Add(1)
-		go func(lock *Lock) {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := lock.Release(ctx, key, fencing); err != nil {
 				errChan <- err
 			}
-		}(lock)
+		})
 	}
 	wg.Wait()
 	close(errChan)
@@ -235,15 +231,13 @@ func (dl *DistributedLock) TryExtend(ctx context.Context, key string, fencing st
 
 	errChan := make(chan error, len(dl.locks))
 	for _, lock := range dl.locks {
-		wg.Add(1)
-		go func(lock *Lock) {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := lock.TryExtend(ctx, key, fencing, ttl); err != nil {
 				errChan <- err
 				return
 			}
 			win.Add(1)
-		}(lock)
+		})
 	}
 	wg.Wait()
 	close(errChan)
@@ -285,15 +279,13 @@ func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key string, fenc
 
 	errChan := make(chan error, len(dl.locks))
 	for _, lock := range dl.locks {
-		wg.Add(1)
-		go func(lock *Lock) {
-			defer wg.Done()
+		wg.Go(func() {
 			if err := lock.AcquireOrExtend(ctx, key, fencing, ttl); err != nil {
 				errChan <- err
 				return
 			}
 			win.Add(1)
-		}(lock)
+		})
 	}
 	wg.Wait()
 	close(errChan)
