@@ -12,10 +12,6 @@ import (
 // for first attempts or when max retries are exceeded.
 var closedChan = make(chan time.Time)
 
-func init() {
-	close(closedChan)
-}
-
 // retryConfig holds the configuration for retry behavior.
 type retryConfig struct {
 	maxRetry          int

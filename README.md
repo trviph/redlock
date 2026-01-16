@@ -3,6 +3,7 @@
 [![Go Test](https://github.com/trviph/redlock/actions/workflows/test.yml/badge.svg)](https://github.com/trviph/redlock/actions/workflows/test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/trviph/redlock)](https://goreportcard.com/report/github.com/trviph/redlock)
 [![Go Reference](https://pkg.go.dev/badge/github.com/trviph/redlock.svg)](https://pkg.go.dev/github.com/trviph/redlock)
+[![codecov](https://codecov.io/gh/trviph/redlock/graph/badge.svg?token=CODECOV_TOKEN)](https://codecov.io/gh/trviph/redlock)
 
 A distributed lock implementation in Go backed by Redis, supporting both single-instance locks and quorum-based multi-instance locks via the [Redlock algorithm](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/).
 
