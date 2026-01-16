@@ -4,8 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/trviph/redlock)](https://goreportcard.com/report/github.com/trviph/redlock)
 [![Go Reference](https://pkg.go.dev/badge/github.com/trviph/redlock.svg)](https://pkg.go.dev/github.com/trviph/redlock)
 
-
-Redlock is a distributed lock service implementation in Go backed by Redis. It provides both single-instance and multi-instance (Redlock algorithm) distributed locks.
+A distributed lock implementation in Go backed by Redis, supporting both single-instance locks and quorum-based multi-instance locks via the [Redlock algorithm](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/).
 
 ## Table of Contents
 
@@ -13,20 +12,12 @@ Redlock is a distributed lock service implementation in Go backed by Redis. It p
   - [Table of Contents](#table-of-contents)
   - [Installation](#installation)
   - [Usage](#usage)
-    - [Initialization](#initialization)
-    - [Configuration](#configuration)
-    - [Acquire a Lock](#acquire-a-lock)
-    - [Try to Acquire a Lock (No Retry)](#try-to-acquire-a-lock-no-retry)
-    - [Acquire or Extend a Lock](#acquire-or-extend-a-lock)
-    - [Extend Lock TTL](#extend-lock-ttl)
+    - [Single Instance](#single-instance)
+      - [Key Methods](#key-methods)
+    - [Multi-Instance (Redlock Algorithm)](#multi-instance-redlock-algorithm)
     - [Watchdog Pattern (Auto-Renewal)](#watchdog-pattern-auto-renewal)
-    - [Error Handling](#error-handling)
-      - [Unwrapping Joined Errors](#unwrapping-joined-errors)
-    - [Release a Lock](#release-a-lock)
-  - [DistributedLock (Multi-Instance Redlock)](#distributedlock-multi-instance-redlock)
-    - [Setup](#setup)
-    - [Usage](#usage-1)
-  - [Sentinel Errors](#sentinel-errors)
+  - [Error Handling](#error-handling)
+    - [Unwrapping Joined Errors](#unwrapping-joined-errors)
   - [Testing](#testing)
   - [License](#license)
 
@@ -38,7 +29,7 @@ go get github.com/trviph/redlock
 
 ## Usage
 
-### Initialization
+### Single Instance
 
 ```go
 import (
@@ -48,188 +39,132 @@ import (
     "github.com/trviph/redlock"
 )
 
-// Initialize Redis client
-rdb := redis.NewClient(&redis.Options{
-    Addr: "localhost:6379",
-})
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+lock := redlock.NewLock(rdb,
+    redlock.WithMaxRetry(5),              // Default: -1 (infinite)
+    redlock.WithJitterDuration(200*time.Millisecond), // Default: 300ms
+)
 
-// Initialize Redlock
-dl := redlock.NewLock(rdb)
-```
-
-### Configuration
-
-You can configure the lock behavior using functional options:
-
-```go
-// Set custom retry limit (default is -1, which means infinite retry)
-lock := redlock.NewLock(rdb, redlock.WithMaxRetry(3))
-
-// Set custom jitter duration (default is 300ms)
-lock := redlock.NewLock(rdb, redlock.WithJitterDuration(500*time.Millisecond))
-```
-
-### Acquire a Lock
-
-```go
 ctx := context.Background()
-key := "my-resource-lock"
+key := "my-resource"
 ttl := 10 * time.Second
 
-// err will be nil if lock is acquired
-fencing, err := dl.Acquire(ctx, key, ttl)
+// Acquire lock (retries until success, context cancellation, or max retries)
+fencing, err := lock.Acquire(ctx, key, ttl)
 if err != nil {
-    // Handle error (failed to acquire)
     panic(err)
 }
-
-// Lock acquired
-defer dl.Release(ctx, key, fencing)
+defer lock.Release(ctx, key, fencing)
 
 // Do work...
 ```
 
-### Try to Acquire a Lock (No Retry)
+#### Key Methods
 
-If you want to attempt to acquire the lock exactly once without any retries (fail fast), use `TryAcquire`.
+| Method            | Description                                                    |
+| ----------------- | -------------------------------------------------------------- |
+| `Acquire`         | Acquires lock with retry, returns fencing token                |
+| `TryAcquire`      | Single attempt, no retry; returns `ErrLockAlreadyHeld` if held |
+| `Extend`          | Extends TTL with retry if fencing token matches                |
+| `TryExtend`       | Single extend attempt; returns `ErrLockNotHeld` on failure     |
+| `AcquireOrExtend` | Extends if held, otherwise acquires (with retry)               |
+| `Release`         | Atomically releases lock if fencing token matches              |
+
+---
+
+### Multi-Instance (Redlock Algorithm)
+
+`DistributedLock` implements the Redlock algorithm for higher availability. It acquires locks across multiple independent Redis instances and requires a quorum (N/2 + 1) to succeed.
 
 ```go
-fencing, err := lock.TryAcquire(ctx, key, ttl)
+redis1 := redis.NewClient(&redis.Options{Addr: "redis1:6379"})
+redis2 := redis.NewClient(&redis.Options{Addr: "redis2:6379"})
+redis3 := redis.NewClient(&redis.Options{Addr: "redis3:6379"})
+
+locks := []*redlock.Lock{
+    redlock.NewLock(redis1),
+    redlock.NewLock(redis2),
+    redlock.NewLock(redis3),
+}
+
+dl := redlock.NewDistributedLock(locks,
+    redlock.WithClockDriftFactor(0.01), // Default: 1%
+)
+
+fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
 if err != nil {
-    if errors.Is(err, redlock.ErrLockAlreadyHeld) {
-        // Lock is already taken
-    } else {
-        // Error (e.g. Redis connection)
-    }
+    panic(err)
 }
+defer dl.Release(ctx, "my-resource", fencing)
 ```
 
-### Acquire or Extend a Lock
+The API mirrors `Lock` for consistency (`Acquire`, `TryAcquire`, `Extend`, `TryExtend`, `AcquireOrExtend`, `Release`).
 
-If your work takes longer than expected, or if you want to ensure you hold the lock even if it might have expired (but no one else took it), you can use `AcquireOrExtend`.
-
-```go
-// Extends the lock by another 10 seconds, or re-acquires it if missing
-err := dl.AcquireOrExtend(ctx, key, fencing, 10*time.Second)
-if err != nil {
-    // Handle error
-}
-```
-
-### Extend Lock TTL
-
-If you need to extend a lock you already hold without the risk of re-acquiring it (safer for long-running operations):
-
-```go
-// Extend with retry until success or context cancellation
-err := lock.Extend(ctx, key, fencing, 30*time.Second)
-if err != nil {
-    // Lock was lost or fencing token doesn't match
-}
-```
-
-For fail-fast behavior (no retries):
-
-```go
-err := lock.TryExtend(ctx, key, fencing, 30*time.Second)
-if errors.Is(err, redlock.ErrLockNotHeld) {
-    // Lock doesn't exist or fencing token doesn't match
-}
-```
+> **Note:** Use an odd number of instances (3, 5, 7) for optimal fault tolerance.
 
 ### Watchdog Pattern (Auto-Renewal)
 
-For long-running operations where you don't know the duration upfront, use a watchdog goroutine to periodically extend the lock:
+For long-running operations where duration is unknown, use a watchdog goroutine to periodically extend the lock. This pattern works with both `Lock` and `DistributedLock`:
 
 ```go
-func doWorkWithWatchdog(ctx context.Context, lock *redlock.Lock, key string) error {
-    fencing, err := lock.Acquire(ctx, key, 10*time.Second)
-    if err != nil {
-        return err
-    }
+fencing, _ := lock.Acquire(ctx, key, 10*time.Second)
 
-    // Create a context that cancels when work is done
-    watchdogCtx, stopWatchdog := context.WithCancel(ctx)
-    defer stopWatchdog()
+watchdogCtx, stop := context.WithCancel(ctx)
+defer stop()
 
-    // Start watchdog goroutine
-    watchdogErr := make(chan error, 1)
-    go func() {
-        ticker := time.NewTicker(5 * time.Second) // Extend at half the TTL
-        defer ticker.Stop()
-        for {
-            select {
-            case <-watchdogCtx.Done():
-                return
-            case <-ticker.C:
-                if err := lock.TryExtend(watchdogCtx, key, fencing, 10*time.Second); err != nil {
-                    watchdogErr <- err
-                    return
-                }
-            }
+go func() {
+    ticker := time.NewTicker(5 * time.Second) // Extend at ~half TTL
+    defer ticker.Stop()
+    for {
+        select {
+        case <-watchdogCtx.Done():
+            return
+        case <-ticker.C:
+            lock.TryExtend(watchdogCtx, key, fencing, 10*time.Second)
         }
-    }()
-
-    // Do the actual work
-    if err := doWork(ctx); err != nil {
-        return err
     }
+}()
 
-    // Check if watchdog encountered an error
-    select {
-    case err := <-watchdogErr:
-        return fmt.Errorf("lock lost during work: %w", err)
-    default:
-    }
-
-    return lock.Release(ctx, key, fencing)
-}
+// Do long-running work...
+lock.Release(ctx, key, fencing)
 ```
 
-> **Tip:** Extend at roughly half the TTL interval to provide a safety margin.
-
-### Error Handling
+## Error Handling
 
 The package provides sentinel errors for reliable error checking:
+
+| Error                 | Description                                                                    |
+| --------------------- | ------------------------------------------------------------------------------ |
+| `ErrLockAlreadyHeld`  | Lock is held by another client (from `TryAcquire`)                             |
+| `ErrLockNotHeld`      | Lock doesn't exist or fencing token mismatch (from `TryExtend`)                |
+| `ErrMaxRetryExceeded` | Maximum retry attempts exhausted                                               |
+| `ErrValidityExpired`  | Lock acquired but validity expired due to clock drift (`DistributedLock` only) |
 
 ```go
 fencing, err := lock.Acquire(ctx, key, ttl)
 if err != nil {
     switch {
     case errors.Is(err, redlock.ErrLockAlreadyHeld):
-        // Lock is held by another client (only from TryAcquire)
-        log.Println("Resource is busy, try again later")
-        
+        log.Println("Resource busy")
     case errors.Is(err, redlock.ErrMaxRetryExceeded):
-        // Retry limit reached without acquiring the lock
-        log.Println("Could not acquire lock after max retries")
-        
+        log.Println("Max retries reached")
     case errors.Is(err, redlock.ErrValidityExpired):
-        // Lock acquired but validity expired due to clock drift (DistributedLock)
-        log.Println("Lock validity expired, operation may not be safe")
-        
+        log.Println("Lock validity expired")
     case errors.Is(err, redlock.ErrLockNotHeld):
-        // Extend/TryExtend: lock doesn't exist or fencing doesn't match
         log.Println("Cannot extend: lock not held")
-        
     case errors.Is(err, context.DeadlineExceeded):
-        // Context timeout
-        log.Println("Operation timed out")
-        
+        log.Println("Timeout")
     default:
-        // Redis connection error or other failure
-        log.Printf("Unexpected error: %v", err)
+        log.Printf("Error: %v", err)
     }
-    return err
 }
 ```
 
-#### Unwrapping Joined Errors
+### Unwrapping Joined Errors
 
-When `DistributedLock` operations fail on multiple instances, errors are joined using `errors.Join()`. To inspect individual errors:
+`DistributedLock` operations may join errors from multiple instances using `errors.Join()`:
 
 ```go
-// Unwrap to get individual errors from a joined error
 if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
     for _, e := range unwrapper.Unwrap() {
         log.Printf("Instance error: %v", e)
@@ -237,94 +172,20 @@ if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
 }
 ```
 
-### Release a Lock
-
-```go
-err := lock.Release(ctx, key, fencing)
-```
-
-## DistributedLock (Multi-Instance Redlock)
-
-For higher availability, use `DistributedLock` which implements the [Redlock algorithm](https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/) across multiple independent Redis instances.
-
-### Setup
-
-```go
-// Connect to multiple independent Redis instances
-redis1 := redis.NewClient(&redis.Options{Addr: "redis1:6379"})
-redis2 := redis.NewClient(&redis.Options{Addr: "redis2:6379"})
-redis3 := redis.NewClient(&redis.Options{Addr: "redis3:6379"})
-
-// Create individual locks for each instance
-locks := []*redlock.Lock{
-    redlock.NewLock(redis1),
-    redlock.NewLock(redis2),
-    redlock.NewLock(redis3),
-}
-
-// Create distributed lock with quorum-based consensus
-dl := redlock.NewDistributedLock(locks,
-    redlock.WithClockDriftFactor(0.01), // 1% clock drift (default)
-)
-```
-
-### Usage
-
-The API mirrors `Lock` for consistency:
-
-```go
-// Acquire with retry
-fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
-if err != nil {
-    // Failed to achieve quorum
-}
-defer dl.Release(ctx, "my-resource", fencing)
-
-// Try acquire (no retry, fail fast)
-fencing, err := dl.TryAcquire(ctx, "my-resource", 30*time.Second)
-if errors.Is(err, redlock.ErrLockAlreadyHeld) {
-    // Could not achieve quorum
-}
-
-// Extend or re-acquire
-err := dl.AcquireOrExtend(ctx, "my-resource", fencing, 30*time.Second)
-```
-
-## Sentinel Errors
-
-The package exports sentinel errors for reliable error checking:
-
-```go
-import "errors"
-
-// Check if lock is already held
-if errors.Is(err, redlock.ErrLockAlreadyHeld) { ... }
-
-// Check if max retries exceeded
-if errors.Is(err, redlock.ErrMaxRetryExceeded) { ... }
-
-// Check if lock validity expired (clock drift)
-if errors.Is(err, redlock.ErrValidityExpired) { ... }
-```
-
 ## Testing
 
-This project uses Docker Compose to spin up a Redis instance for integration testing.
+This project uses Docker Compose for integration testing:
 
-1.  **Start Redis:**
-    ```bash
-    docker compose up -d
-    ```
+```bash
+# Start Redis instances
+docker compose up -d
 
-2.  **Run Tests:**
-    ```bash
-    go test -v ./...
-    ```
+# Run tests
+go test -v ./...
 
-3.  **Cleanup:**
-    ```bash
-    docker compose down
-    ```
+# Cleanup
+docker compose down
+```
 
 ## License
 
