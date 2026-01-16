@@ -89,16 +89,7 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 				return ErrMaxRetryExceeded
 			}
 
-			script := `
-				if redis.call("get", KEYS[1]) == ARGV[1] then
-					return redis.call("pexpire", KEYS[1], ARGV[2])
-				elseif redis.call("set", KEYS[1], ARGV[1], "NX", "PX", ARGV[2]) then
-					return 1
-				else
-					return 0
-				end
-			`
-			cmd := dl.rcli.Eval(ctx, script, []string{key}, fencing, ttl.Milliseconds())
+			cmd := runScript(ctx, dl.rcli, scriptAcquireOrExtend, shaAcquireOrExtend, []string{key}, fencing, ttl.Milliseconds())
 			if cmd.Err() != nil {
 				return cmd.Err()
 			}
@@ -142,14 +133,7 @@ func (dl *Lock) TryExtend(ctx context.Context, key, fencing string, ttl time.Dur
 }
 
 func (dl *Lock) tryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
-	script := `
-		if redis.call("get", KEYS[1]) == ARGV[1] then
-			return redis.call("pexpire", KEYS[1], ARGV[2])
-		else
-			return 0
-		end
-	`
-	cmd := dl.rcli.Eval(ctx, script, []string{key}, fencing, ttl.Milliseconds())
+	cmd := runScript(ctx, dl.rcli, scriptExtend, shaExtend, []string{key}, fencing, ttl.Milliseconds())
 	if cmd.Err() != nil {
 		return cmd.Err()
 	}
@@ -186,12 +170,5 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 
 // Release releases a lock with a fencing value.
 func (dl *Lock) Release(ctx context.Context, key string, fencing string) error {
-	script := `
-	if redis.call("get", KEYS[1]) == ARGV[1] then
-		return redis.call("del", KEYS[1])
-	else
-		return 0
-	end
-	`
-	return dl.rcli.Eval(ctx, script, []string{key}, fencing).Err()
+	return runScript(ctx, dl.rcli, scriptRelease, shaRelease, []string{key}, fencing).Err()
 }
