@@ -2,9 +2,7 @@ package redlock
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
-	"math/big"
 	"time"
 
 	redis "github.com/redis/go-redis/v9"
@@ -21,20 +19,16 @@ type redisClient interface {
 // It supports automatic retry with configurable backoff, atomic operations
 // via Lua scripts, and fencing tokens for safe lock ownership.
 type Lock struct {
-	rcli              redisClient
-	maxJitterDuration time.Duration
-	minRetryDelay     time.Duration
-	maxRetry          int
+	rcli redisClient
+	rc   retryConfig
 }
 
 // NewLock creates a new Lock backed by the given Redis client.
 // By default, the lock retries indefinitely with 300ms max jitter.
 func NewLock(rcli redisClient, opts ...LockOption) *Lock {
 	dl := &Lock{
-		rcli:              rcli,
-		maxRetry:          -1,
-		maxJitterDuration: 300 * time.Millisecond,
-		minRetryDelay:     0,
+		rcli: rcli,
+		rc:   defaultRetryConfig(),
 	}
 	for _, opt := range opts {
 		opt(dl)
@@ -90,8 +84,8 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.waitRetry(retries):
-			if retries > dl.maxRetry && dl.maxRetry >= 0 {
+		case <-dl.rc.wait(retries):
+			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
 				return ErrMaxRetryExceeded
 			}
 
@@ -127,8 +121,8 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.waitRetry(retries):
-			if retries > dl.maxRetry && dl.maxRetry >= 0 {
+		case <-dl.rc.wait(retries):
+			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
 				return ErrMaxRetryExceeded
 			}
 
@@ -174,8 +168,8 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.waitRetry(retries):
-			if retries > dl.maxRetry && dl.maxRetry >= 0 {
+		case <-dl.rc.wait(retries):
+			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
 				return ErrMaxRetryExceeded
 			}
 			cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
@@ -200,27 +194,4 @@ func (dl *Lock) Release(ctx context.Context, key string, fencing string) error {
 	end
 	`
 	return dl.rcli.Eval(ctx, script, []string{key}, fencing).Err()
-}
-
-func (dl *Lock) waitRetry(retries int) <-chan time.Time {
-	// IF retries == 0: It's the first attempt, so we should run immediately.
-	// IF retries > maxRetry: We have exceeded the max retry limit, so we should return immediately
-	// to let the loop handle the error.
-	// In both cases, we return a closed channel to unblock the select statement immediately.
-	if retries == 0 || (dl.maxRetry >= 0 && retries > dl.maxRetry) {
-		return closedChan
-	}
-
-	var jitter time.Duration
-	if dl.maxJitterDuration > 0 {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(dl.maxJitterDuration)))
-		if err != nil {
-			// If random generation fails, we default to the max jitter duration
-			// This ensures we still wait some time and don't break the loop.
-			jitter = dl.maxJitterDuration
-		} else {
-			jitter = time.Duration(n.Int64())
-		}
-	}
-	return time.After(dl.minRetryDelay + jitter)
 }

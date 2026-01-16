@@ -11,7 +11,7 @@ type LockOption func(*Lock)
 // Default is 300 milliseconds.
 func WithJitterDuration(jitter time.Duration) LockOption {
 	return func(dl *Lock) {
-		dl.maxJitterDuration = jitter
+		dl.rc.maxJitterDuration = jitter
 	}
 }
 
@@ -20,7 +20,7 @@ func WithJitterDuration(jitter time.Duration) LockOption {
 // Set to 0 to disable retries (equivalent to TryAcquire behavior).
 func WithMaxRetry(maxRetry int) LockOption {
 	return func(dl *Lock) {
-		dl.maxRetry = maxRetry
+		dl.rc.maxRetry = maxRetry
 	}
 }
 
@@ -29,6 +29,6 @@ func WithMaxRetry(maxRetry int) LockOption {
 // Default is 0 (only jitter delay).
 func WithMinRetryDelay(minDelay time.Duration) LockOption {
 	return func(dl *Lock) {
-		dl.minRetryDelay = minDelay
+		dl.rc.minRetryDelay = minDelay
 	}
 }
