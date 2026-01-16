@@ -71,6 +71,11 @@ defer lock.Release(ctx, key, fencing)
 | `AcquireOrExtend` | Extends if held, otherwise acquires (with retry)               |
 | `Release`         | Atomically releases lock if fencing token matches              |
 
+> [!NOTE]
+> The `fencing` token returned by `Acquire` is a random UUID used solely to identify the lock owner and prevent race conditions when extending or releasing the lock. It is **not** a monotonically increasing number and cannot be used for external shielding (e.g., preventing split-brain writes in storage systems) as described in [Martin Kleppmann's critique](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html).
+>
+> If you require strict monotonic fencing tokens for external shielding, you can generate them yourself (e.g., using a separate counter) and pass them to the `AcquireWithFencing` or `TryAcquireWithFencing` methods. However, if strong consistency is a strict requirement, it is recommended to consider systems designed for it, such as **etcd** or **Zookeeper**, instead of Redis.
+
 ---
 
 ### Multi-Instance (Redlock Algorithm)
