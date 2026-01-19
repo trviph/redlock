@@ -169,6 +169,13 @@ You can also customize the extension interval using `WatchWithInterval`:
 redlock.WatchWithInterval(watchCtx, lock, key, fencing, ttl, 1*time.Second)
 ```
 
+> [!WARNING]
+> The watchdog goroutine (`Watch` or `WatchWithInterval`) will **not** stop automatically if the lock is lost or fails to extend. It will continue attempting to extend the lock indefinitely until the provided `context` is canceled.
+>
+> **Design Rationale:** This behavior is intentional to handle cases where the watchdog is started before the lock is successfully acquired (e.g., during a retry loop) or to survive transient network failures. It avoids prematurely killing the watchdog due to temporary errors.
+>
+> Always ensure you cancel the context when the operation is finished or if you detect that the lock has been lost.
+
 ## Error Handling
 
 The package provides sentinel errors for reliable error checking:
