@@ -20,6 +20,7 @@ import (
 type DistributedLock struct {
 	locks            []*Lock
 	clockDriftFactor float64
+	clockDriftBuffer time.Duration
 	releaseTimeout   time.Duration
 	rc               retryConfig
 }
@@ -31,7 +32,8 @@ type DistributedLock struct {
 func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *DistributedLock {
 	dl := &DistributedLock{
 		locks:            locks,
-		clockDriftFactor: 0.01, // 1% clock drift factor, as recommended by the Redlock paper
+		clockDriftFactor: 0.01,                 // 1% clock drift factor, as recommended by the Redlock paper
+		clockDriftBuffer: 2 * time.Millisecond, // Small constant for network round-trip variance
 		releaseTimeout:   5 * time.Second,
 		rc:               defaultRetryConfig(),
 	}
@@ -154,9 +156,9 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 		// Clock drift check: ensure the lock is still valid
 		elapsed := time.Since(startTime)
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
-		validity := ttl - elapsed - drift
+		validity := ttl - elapsed - drift - dl.clockDriftBuffer
 		if validity <= 0 {
-			return fmt.Errorf("lock acquired but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
+			return fmt.Errorf("lock acquired but validity expired (elapsed %v, drift %v, buffer %v, ttl %v): %w", elapsed, drift, dl.clockDriftBuffer, ttl, ErrValidityExpired)
 		}
 		return nil
 	}
@@ -246,9 +248,9 @@ func (dl *DistributedLock) TryExtend(ctx context.Context, key, fencing string, t
 		// Clock drift check: ensure the lock is still valid
 		elapsed := time.Since(startTime)
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
-		validity := ttl - elapsed - drift
+		validity := ttl - elapsed - drift - dl.clockDriftBuffer
 		if validity <= 0 {
-			return fmt.Errorf("lock extended but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
+			return fmt.Errorf("lock extended but validity expired (elapsed %v, drift %v, buffer %v, ttl %v): %w", elapsed, drift, dl.clockDriftBuffer, ttl, ErrValidityExpired)
 		}
 		return nil
 	}
@@ -299,9 +301,9 @@ func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key, fencing str
 		// Clock drift check: ensure the lock is still valid
 		elapsed := time.Since(startTime)
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
-		validity := ttl - elapsed - drift
+		validity := ttl - elapsed - drift - dl.clockDriftBuffer
 		if validity <= 0 {
-			return fmt.Errorf("lock acquired/extended but validity expired (elapsed %v, drift %v, ttl %v): %w", elapsed, drift, ttl, ErrValidityExpired)
+			return fmt.Errorf("lock acquired/extended but validity expired (elapsed %v, drift %v, buffer %v, ttl %v): %w", elapsed, drift, dl.clockDriftBuffer, ttl, ErrValidityExpired)
 		}
 		return nil
 	}

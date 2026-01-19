@@ -43,6 +43,40 @@ func TestWithClockDriftFactor(t *testing.T) {
 	_ = dl.Release(ctx, key, fencing)
 }
 
+func TestWithClockDriftBuffer(t *testing.T) {
+	// Setup
+	rdb1 := setupRedis(t, testRedisPort1)
+	rdb2 := setupRedis(t, testRedisPort2)
+	rdb3 := setupRedis(t, testRedisPort3)
+	ctx := context.Background()
+
+	locks := []*redlock.Lock{
+		redlock.NewLock(rdb1),
+		redlock.NewLock(rdb2),
+		redlock.NewLock(rdb3),
+	}
+	key := "test-drift-buffer-opt-" + uuid.NewString()
+	t.Cleanup(func() {
+		rdb1.Del(ctx, key)
+		rdb2.Del(ctx, key)
+		rdb3.Del(ctx, key)
+	})
+
+	// Run with a custom buffer of 10ms
+	dl := redlock.NewDistributedLock(locks, redlock.WithClockDriftBuffer(10*time.Millisecond))
+	fencing, err := dl.Acquire(ctx, key, testTTLLong)
+
+	// Assert
+	if err != nil {
+		t.Fatalf("Acquire failed: %v", err)
+	}
+	if fencing == "" {
+		t.Error("Expected valid fencing token")
+	}
+
+	_ = dl.Release(ctx, key, fencing)
+}
+
 func TestWithReleaseTimeout(t *testing.T) {
 	// Setup
 	rdb1 := setupRedis(t, testRedisPort1)

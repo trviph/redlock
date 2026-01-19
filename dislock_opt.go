@@ -14,6 +14,16 @@ func WithClockDriftFactor(factor float64) DistributedLockOption {
 	}
 }
 
+// WithClockDriftBuffer sets a fixed buffer duration to subtract from lock validity.
+// This accounts for network round-trip variance and other timing uncertainties.
+// The default value is 2ms. Combined with the clock drift factor, the validity
+// is calculated as: TTL - elapsed - (TTL * driftFactor) - driftBuffer.
+func WithClockDriftBuffer(buffer time.Duration) DistributedLockOption {
+	return func(dl *DistributedLock) {
+		dl.clockDriftBuffer = buffer
+	}
+}
+
 // WithReleaseTimeout sets the timeout for cleanup release operations.
 // When a lock acquisition fails, partially acquired locks are released
 // using this timeout. Default is 5 seconds.
