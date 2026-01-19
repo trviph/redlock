@@ -9,6 +9,7 @@
 //   - Atomic acquisition and release using Lua scripts
 //   - Fencing tokens (UUIDs) to prevent unsafe lock hand-off
 //   - Lock extension for long-running operations
+//   - Watchdog pattern support via [Watch] and [WatchWithInterval]
 //
 // Example usage:
 //

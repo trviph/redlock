@@ -162,6 +162,13 @@ watchCancel() // Stop the watchdog
 lock.Release(ctx, key, fencing)
 ```
 
+You can also customize the extension interval using `WatchWithInterval`:
+
+```go
+// Check every 1 second instead of default ttl/2
+redlock.WatchWithInterval(watchCtx, lock, key, fencing, ttl, 1*time.Second)
+```
+
 ## Error Handling
 
 The package provides sentinel errors for reliable error checking:

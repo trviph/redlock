@@ -17,6 +17,9 @@ import (
 // BUG(trviph): The Extend and TryExtend methods do not release partially-extended locks on
 // quorum failure. Unlike Acquire/TryAcquire/AcquireOrExtend, if Extend/TryExtend fails to
 // achieve quorum, the successfully extended instances remain locked until TTL expires.
+//
+// This bug will probably never be fixed. Do not use Extend/TryExtend if you are not comfortable
+// with this uncertainty.
 type DistributedLock struct {
 	locks            []*Lock
 	clockDriftFactor float64
@@ -263,9 +266,10 @@ func (dl *DistributedLock) TryExtend(ctx context.Context, key, fencing string, t
 // (N/2 + 1) of instances to succeed.
 // Also validates that the lock is still valid after the operation by checking clock drift.
 //
-// WARNING: On failure (quorum not achieved or clock drift expired), this method releases ALL
+// WARNING(trviph): On failure (quorum not achieved or clock drift expired), this method releases ALL
 // locks across ALL instances, including any locks that were already held before this call.
-// If you need to preserve an existing lock on failure, use [DistributedLock.TryExtend] instead.
+// If you need to preserve an existing lock on failure, use [DistributedLock.Extend]
+// or [DistributedLock.TryExtend] instead.
 //
 // Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
 func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) (err error) {
