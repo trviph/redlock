@@ -37,6 +37,7 @@
 //	}
 //	dl := redlock.NewDistributedLock(locks,
 //	    redlock.WithClockDriftFactor(0.01),
+//	    redlock.WithClockDriftBuffer(2*time.Millisecond),
 //	)
 //	fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
 //	if err != nil {
@@ -55,7 +56,8 @@
 //
 // Both lock types use functional options for configuration:
 //   - [Lock]: [WithMaxRetry], [WithJitterDuration], [WithMinRetryDelay]
-//   - [DistributedLock]: [WithClockDriftFactor]
+//   - [DistributedLock]: [WithClockDriftFactor], [WithClockDriftBuffer], [WithReleaseTimeout],
+//     [WithDistMaxRetry], [WithDistMinRetryDelay], [WithDistMaxJitterDuration]
 //
 // # Sentinel Errors
 //

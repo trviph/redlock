@@ -42,8 +42,9 @@ import (
 
 rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 lock := redlock.NewLock(rdb,
-    redlock.WithMaxRetry(5),              // Default: -1 (infinite)
-    redlock.WithJitterDuration(200*time.Millisecond), // Default: 300ms
+    redlock.WithMaxRetry(-1),                         // Default: -1 (infinite)
+    redlock.WithMinRetryDelay(0),                     // Default: 0
+    redlock.WithJitterDuration(300*time.Millisecond), // Default: 300ms
 )
 
 ctx := context.Background()
@@ -94,7 +95,12 @@ locks := []*redlock.Lock{
 }
 
 dl := redlock.NewDistributedLock(locks,
-    redlock.WithClockDriftFactor(0.01), // Default: 1%
+    redlock.WithClockDriftFactor(0.01),                // Default: 1%
+    redlock.WithClockDriftBuffer(2*time.Millisecond),  // Default: 2ms
+    redlock.WithReleaseTimeout(5*time.Second),       // Default: 5s
+    redlock.WithDistMaxRetry(-1),                    // Default: -1 (infinite)
+    redlock.WithDistMinRetryDelay(0),                // Default: 0
+    redlock.WithDistMaxJitterDuration(300*time.Millisecond), // Default: 300ms
 )
 
 fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
