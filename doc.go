@@ -9,6 +9,7 @@
 //   - Atomic acquisition and release using Lua scripts
 //   - Fencing tokens (UUIDs) to prevent unsafe lock hand-off
 //   - Lock extension for long-running operations
+//   - Watchdog pattern support via [Watch] and [WatchWithInterval]
 //
 // Example usage:
 //
@@ -58,6 +59,20 @@
 //   - [Lock]: [WithMaxRetry], [WithJitterDuration], [WithMinRetryDelay]
 //   - [DistributedLock]: [WithClockDriftFactor], [WithClockDriftBuffer], [WithReleaseTimeout],
 //     [WithDistMaxRetry], [WithDistMinRetryDelay], [WithDistMaxJitterDuration]
+//
+// # Watchdog Pattern
+//
+// [Watch] and [WatchWithInterval] provide a background goroutine to automatically extend
+// the lock duration.
+//
+// Warning: The watchdog will **not** stop automatically if the lock is lost or fails
+// to extend. It will continue attempting to extend the lock indefinitely until the
+// provided context is canceled.
+//
+// This design handles cases where the watchdog is started before the lock is successfully
+// acquired (e.g., in a background retry loop) and ensures resilience against transient
+// network failures. The user is responsible for managing the watchdog's lifecycle via
+// the context.
 //
 // # Sentinel Errors
 //
