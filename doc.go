@@ -74,6 +74,28 @@
 // network failures. The user is responsible for managing the watchdog's lifecycle via
 // the context.
 //
+// # WatchDog with Callbacks
+//
+// [WatchDog] allows monitoring multiple locks with custom error handling via callbacks.
+//
+//	// Define a callback to handle errors
+//	errHandler := func(ctx context.Context, item *redlock.WatchItem, err error) {
+//	    if err == context.Canceled {
+//	        // Context cancellation is always the last error received
+//	        log.Printf("WatchDog stopped for key %s\n", item.Key)
+//	    } else {
+//	        log.Printf("WatchDog error for key %s: %v\n", item.Key, err)
+//	    }
+//	}
+//
+//	// Start WatchDog with the callback
+//	wd := redlock.NewWatchDog(locker,
+//	    redlock.WithCallbacks(cbCtx, errHandler),
+//	    // Watch item with specific interval (pass 0 for default ttl/2)
+//	    redlock.WithItem("resource-1", "token-1", 10*time.Second, 2*time.Second),
+//	)
+//	go wd.Run(ctx)
+//
 // # Sentinel Errors
 //
 // The package exports sentinel errors for reliable error checking with [errors.Is]:

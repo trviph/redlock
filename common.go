@@ -1,60 +1,12 @@
 package redlock
 
 import (
-	"context"
 	"crypto/rand"
 	"math/big"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-// Watch starts a watchdog goroutine that periodically extends the lock's TTL.
-// It is designed to be used for long-running operations where the duration is unknown.
-// The watchdog stops when the provided context is canceled.
-//
-// The watchdog attempts to extend the lock at intervals of TTL/2.
-//
-// WARNING(trviph): Do not use context.Background() without a cancel mechanism (e.g. WithCancel),
-// otherwise the watchdog will never terminate.
-//
-// BUG(trviph): The Watch function relies on TryExtend. When using a DistributedLock, it suffers
-// from the partial extension issue on quorum failure. If DistributedLock.TryExtend fails to
-// achieve quorum, the successfully extended instances remain locked until TTL expires.
-//
-// This bug will probably never be fixed. Do not use Watch with DistributedLock if you are not
-// comfortable with this uncertainty.
-func Watch(ctx context.Context, locker Locker, key, fencing string, ttl time.Duration) {
-	WatchWithInterval(ctx, locker, key, fencing, ttl, ttl/2)
-}
-
-// WatchWithInterval starts a watchdog goroutine that periodically extends the lock's TTL.
-// It allows customizing the interval between extension attempts.
-// The watchdog stops when the provided context is canceled.
-//
-// WARNING(trviph): Do not use context.Background() without a cancel mechanism (e.g. WithCancel),
-// otherwise the watchdog will never terminate.
-//
-// BUG(trviph): The WatchWithInterval function relies on TryExtend. When using a DistributedLock,
-// it suffers from the partial extension issue on quorum failure. If DistributedLock.TryExtend fails to
-// achieve quorum, the successfully extended instances remain locked until TTL expires.
-//
-// This bug will probably never be fixed. Do not use WatchWithInterval with DistributedLock if you are not
-// comfortable with this uncertainty.
-func WatchWithInterval(ctx context.Context, locker Locker, key, fencing string, ttl, interval time.Duration) {
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_ = locker.TryExtend(ctx, key, fencing, ttl)
-			}
-		}
-	}()
-}
 
 // closedChan is used to immediately unblock select statements
 // for first attempts or when max retries are exceeded.

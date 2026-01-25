@@ -169,6 +169,28 @@ You can also customize the extension interval using `WatchWithInterval`:
 redlock.WatchWithInterval(watchCtx, lock, key, fencing, ttl, 1*time.Second)
 ```
 
+For more control on handling errors (logging, early stopping), use `WatchDog`:
+
+```go
+// Define a callback to handle errors
+errHandler := func(ctx context.Context, item *redlock.WatchItem, err error) {
+    if err == context.Canceled {
+        // Context cancellation is always the last error received
+        log.Printf("WatchDog stopped for key %s", item.Key)
+        return
+    }
+    log.Printf("WatchDog error for key %s: %v", item.Key, err)
+}
+
+// Start WatchDog with the callback
+wd := redlock.NewWatchDog(locker,
+    redlock.WithCallbacks(cbCtx, errHandler),
+    // Watch item with specific interval (pass 0 for default ttl/2)
+    redlock.WithItem("resource-1", "token-1", 10*time.Second, 2*time.Second),
+)
+go wd.Run(ctx)
+```
+
 > [!WARNING]
 > The watchdog goroutine (`Watch` or `WatchWithInterval`) will **not** stop automatically if the lock is lost or fails to extend. It will continue attempting to extend the lock indefinitely until the provided `context` is canceled.
 >
