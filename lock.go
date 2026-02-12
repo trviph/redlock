@@ -19,16 +19,16 @@ type redisClient interface {
 // It supports automatic retry with configurable backoff, atomic operations
 // via Lua scripts, and fencing tokens for safe lock ownership.
 type Lock struct {
-	rcli redisClient
-	rc   retryConfig
+	rcli   redisClient
+	waiter Waiter
 }
 
 // NewLock creates a new Lock backed by the given Redis client.
 // By default, the lock retries indefinitely with 300ms max jitter.
 func NewLock(rcli redisClient, opts ...LockOption) *Lock {
 	dl := &Lock{
-		rcli: rcli,
-		rc:   defaultRetryConfig(),
+		rcli:   rcli,
+		waiter: DefaultJitterWait(),
 	}
 	for _, opt := range opts {
 		opt(dl)
@@ -84,9 +84,9 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.rc.wait(retries):
-			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
-				return ErrMaxRetryExceeded
+		case waitInfo := <-dl.waiter.Wait(retries):
+			if waitInfo.Err != nil {
+				return waitInfo.Err
 			}
 
 			cmd := runScript(ctx, dl.rcli, scriptAcquireOrExtend, shaAcquireOrExtend, []string{key}, fencing, ttl.Milliseconds())
@@ -112,9 +112,9 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.rc.wait(retries):
-			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
-				return ErrMaxRetryExceeded
+		case waitInfo := <-dl.waiter.Wait(retries):
+			if waitInfo.Err != nil {
+				return waitInfo.Err
 			}
 
 			err := dl.TryExtend(ctx, key, fencing, ttl)
@@ -148,10 +148,11 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.rc.wait(retries):
-			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
-				return ErrMaxRetryExceeded
+		case waitInfo := <-dl.waiter.Wait(retries):
+			if waitInfo.Err != nil {
+				return waitInfo.Err
 			}
+
 			cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
 			if cmd.Err() != nil {
 				return cmd.Err()

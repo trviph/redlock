@@ -33,30 +33,50 @@ func WithReleaseTimeout(timeout time.Duration) DistributedLockOption {
 	}
 }
 
+// Deprecated: Use [WithDistWaiter] instead.
+//
 // WithDistMaxRetry sets the maximum number of retries for Acquire/AcquireWithFencing/Extend.
 // Set to -1 for infinite retries (default).
 // These methods retry by calling the corresponding Try* method until success,
 // context cancellation, or max retries exceeded.
 func WithDistMaxRetry(maxRetry int) DistributedLockOption {
 	return func(dl *DistributedLock) {
-		dl.rc.maxRetry = maxRetry
+		if rp, ok := dl.waiter.(*JitterWait); ok {
+			rp.MaxIteration = maxRetry
+		}
 	}
 }
 
+// Deprecated: Use [WithDistWaiter] instead.
+//
 // WithDistMaxJitterDuration sets the maximum jitter duration for retry delays.
 // The actual jitter is a random value between 0 and this duration.
 // Default is 300ms.
 func WithDistMaxJitterDuration(maxJitter time.Duration) DistributedLockOption {
 	return func(dl *DistributedLock) {
-		dl.rc.maxJitterDuration = maxJitter
+		if rp, ok := dl.waiter.(*JitterWait); ok {
+			rp.MaxJitterDuration = maxJitter
+		}
 	}
 }
 
+// Deprecated: Use [WithDistWaiter] instead.
+//
 // WithDistMinRetryDelay sets the minimum delay between retries.
 // The actual delay is minRetryDelay + random jitter.
 // Default is 0.
 func WithDistMinRetryDelay(minDelay time.Duration) DistributedLockOption {
 	return func(dl *DistributedLock) {
-		dl.rc.minRetryDelay = minDelay
+		if rp, ok := dl.waiter.(*JitterWait); ok {
+			rp.MinDelay = minDelay
+		}
+	}
+}
+
+// WithDistWaiter sets the [Waiter] for the distributed lock.
+// Default is [JitterWait] with default configuration [DefaultJitterWait].
+func WithDistWaiter(waiter Waiter) DistributedLockOption {
+	return func(dl *DistributedLock) {
+		dl.waiter = waiter
 	}
 }

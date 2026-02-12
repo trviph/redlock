@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+type WaitInfo struct {
+	DoneAt time.Time
+	Err    error
+}
+
+// Waiter defines the interface for wait in-between retries.
+type Waiter interface {
+	// Notify returns a channel that will receive after the appropriate retry delay.
+	// `times` is the number of times Wait is called (0 for the first call).
+	// The method should return a channel that will receive a value or be closed after the wait duration.
+	// If the retry limit is exceeded or retries should stop, it returns an error.
+	Wait(times int) <-chan WaitInfo
+}
+
 // Locker defines the common interface implemented by both Lock and DistributedLock.
 // This allows code to be written against the interface and work with either implementation.
 type Locker interface {
@@ -50,4 +64,5 @@ type Locker interface {
 var (
 	_ Locker = (*Lock)(nil)
 	_ Locker = (*DistributedLock)(nil)
+	_ Waiter = (*JitterWait)(nil)
 )

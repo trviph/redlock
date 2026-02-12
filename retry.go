@@ -6,50 +6,55 @@ import (
 	"time"
 )
 
-// closedChan is used to immediately unblock select statements
-// for first attempts or when max retries are exceeded.
-var closedChan = make(chan time.Time)
-
-// retryConfig holds the configuration for retry behavior.
-type retryConfig struct {
-	maxRetry          int
-	minRetryDelay     time.Duration
-	maxJitterDuration time.Duration
+// JitterWait holds the configuration for retry behavior.
+type JitterWait struct {
+	MaxIteration      int
+	MinDelay          time.Duration
+	MaxJitterDuration time.Duration
 }
 
-// defaultRetryConfig returns the default retry configuration:
+// DefaultJitterWait returns the default retry configuration:
 // infinite retries with 300ms max jitter.
-func defaultRetryConfig() retryConfig {
-	return retryConfig{
-		maxRetry:          -1,
-		minRetryDelay:     0,
-		maxJitterDuration: 300 * time.Millisecond,
+func DefaultJitterWait() *JitterWait {
+	return &JitterWait{
+		MaxIteration:      -1,
+		MinDelay:          0,
+		MaxJitterDuration: 300 * time.Millisecond,
 	}
 }
 
-// wait returns a channel that will receive after the appropriate retry delay.
+// Wait returns a channel that will receive after the appropriate retry delay.
 // If retries == 0, it returns immediately (first attempt).
-// If retries > maxRetry (and maxRetry >= 0), it returns immediately to let the caller handle the error.
+// If retries > maxRetry (and maxRetry >= 0), it returns ErrMaxRetryExceeded.
 // Otherwise, it waits for minRetryDelay + random jitter (up to maxJitterDuration).
-func (rc retryConfig) wait(retries int) <-chan time.Time {
+func (jr *JitterWait) Wait(times int) <-chan WaitInfo {
+	waitChan := make(chan WaitInfo, 1)
+	defer close(waitChan)
+
 	// IF retries == 0: It's the first attempt, so we should run immediately.
-	// IF retries > maxRetry: We have exceeded the max retry limit, so we should return immediately
-	// to let the loop handle the error.
-	// In both cases, we return a closed channel to unblock the select statement immediately.
-	if retries == 0 || (rc.maxRetry >= 0 && retries > rc.maxRetry) {
-		return closedChan
+	// IF retries > maxRetry: We have exceeded the max retry limit, so we should return
+	// ErrMaxRetryExceeded to let the caller handle the error.
+	if times == 0 {
+		waitChan <- WaitInfo{DoneAt: time.Now()}
+		return waitChan
+	}
+
+	if jr.MaxIteration >= 0 && times > jr.MaxIteration {
+		waitChan <- WaitInfo{Err: ErrMaxRetryExceeded}
+		return waitChan
 	}
 
 	var jitter time.Duration
-	if rc.maxJitterDuration > 0 {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(rc.maxJitterDuration)))
+	if jr.MaxJitterDuration > 0 {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(jr.MaxJitterDuration)))
 		if err != nil {
 			// If random generation fails, we default to the max jitter duration
 			// This ensures we still wait some time and don't break the loop.
-			jitter = rc.maxJitterDuration
+			jitter = jr.MaxJitterDuration
 		} else {
 			jitter = time.Duration(n.Int64())
 		}
 	}
-	return time.After(rc.minRetryDelay + jitter)
+	waitChan <- WaitInfo{DoneAt: <-time.After(jr.MinDelay + jitter)}
+	return waitChan
 }
