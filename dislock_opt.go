@@ -42,7 +42,7 @@ func WithReleaseTimeout(timeout time.Duration) DistributedLockOption {
 func WithDistMaxRetry(maxRetry int) DistributedLockOption {
 	return func(dl *DistributedLock) {
 		if rp, ok := dl.waiter.(*JitterWait); ok {
-			rp.MaxIteration = maxRetry
+			rp.maxIteration = maxRetry
 		}
 	}
 }
@@ -55,7 +55,7 @@ func WithDistMaxRetry(maxRetry int) DistributedLockOption {
 func WithDistMaxJitterDuration(maxJitter time.Duration) DistributedLockOption {
 	return func(dl *DistributedLock) {
 		if rp, ok := dl.waiter.(*JitterWait); ok {
-			rp.MaxJitterDuration = maxJitter
+			rp.maxJitterDuration = maxJitter
 		}
 	}
 }
@@ -68,7 +68,7 @@ func WithDistMaxJitterDuration(maxJitter time.Duration) DistributedLockOption {
 func WithDistMinRetryDelay(minDelay time.Duration) DistributedLockOption {
 	return func(dl *DistributedLock) {
 		if rp, ok := dl.waiter.(*JitterWait); ok {
-			rp.MinDelay = minDelay
+			rp.minDelay = minDelay
 		}
 	}
 }

@@ -14,7 +14,7 @@ type LockOption func(*Lock)
 func WithJitterDuration(jitter time.Duration) LockOption {
 	return func(dl *Lock) {
 		if rp, ok := dl.waiter.(*JitterWait); ok {
-			rp.MaxJitterDuration = jitter
+			rp.maxJitterDuration = jitter
 		}
 	}
 }
@@ -27,7 +27,7 @@ func WithJitterDuration(jitter time.Duration) LockOption {
 func WithMaxRetry(maxRetry int) LockOption {
 	return func(dl *Lock) {
 		if rp, ok := dl.waiter.(*JitterWait); ok {
-			rp.MaxIteration = maxRetry
+			rp.maxIteration = maxRetry
 		}
 	}
 }
@@ -40,7 +40,7 @@ func WithMaxRetry(maxRetry int) LockOption {
 func WithMinRetryDelay(minDelay time.Duration) LockOption {
 	return func(dl *Lock) {
 		if rp, ok := dl.waiter.(*JitterWait); ok {
-			rp.MinDelay = minDelay
+			rp.minDelay = minDelay
 		}
 	}
 }
