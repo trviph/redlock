@@ -1,6 +1,7 @@
 package redlock
 
 import (
+	"context"
 	"crypto/rand"
 	"math/big"
 	"time"
@@ -27,18 +28,18 @@ func DefaultJitterWait() *JitterWait {
 // If retries == 0, it returns immediately (first attempt).
 // If retries > maxRetry (and maxRetry >= 0), it returns ErrMaxRetryExceeded.
 // Otherwise, it waits for minRetryDelay + random jitter (up to maxJitterDuration).
-func (jr *JitterWait) Wait(times int) <-chan WaitInfo {
+func (jr *JitterWait) Wait(ctx context.Context, times int) <-chan WaitInfo {
 	waitChan := make(chan WaitInfo, 1)
 	defer close(waitChan)
 
 	// IF retries == 0: It's the first attempt, so we should run immediately.
-	// IF retries > maxRetry: We have exceeded the max retry limit, so we should return
-	// ErrMaxRetryExceeded to let the caller handle the error.
 	if times == 0 {
 		waitChan <- WaitInfo{DoneAt: time.Now()}
 		return waitChan
 	}
 
+	// IF retries > maxRetry: We have exceeded the max retry limit, so we should return
+	// ErrMaxRetryExceeded to let the caller handle the error.
 	if jr.MaxIteration >= 0 && times > jr.MaxIteration {
 		waitChan <- WaitInfo{Err: ErrMaxRetryExceeded}
 		return waitChan
@@ -55,6 +56,13 @@ func (jr *JitterWait) Wait(times int) <-chan WaitInfo {
 			jitter = time.Duration(n.Int64())
 		}
 	}
-	waitChan <- WaitInfo{DoneAt: <-time.After(jr.MinDelay + jitter)}
-	return waitChan
+
+	select {
+	case <-ctx.Done():
+		waitChan <- WaitInfo{Err: ctx.Err()}
+		return waitChan
+	case at := <-time.After(jr.MinDelay + jitter):
+		waitChan <- WaitInfo{DoneAt: at}
+		return waitChan
+	}
 }

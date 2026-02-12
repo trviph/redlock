@@ -16,7 +16,7 @@ type Waiter interface {
 	// `times` is the number of times Wait is called (0 for the first call).
 	// The method should return a channel that will receive a value or be closed after the wait duration.
 	// If the retry limit is exceeded or retries should stop, it returns an error.
-	Wait(times int) <-chan WaitInfo
+	Wait(ctx context.Context, times int) <-chan WaitInfo
 }
 
 // Locker defines the common interface implemented by both Lock and DistributedLock.

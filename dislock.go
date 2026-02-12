@@ -86,7 +86,7 @@ func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case waitInfo := <-dl.waiter.Wait(retries):
+		case waitInfo := <-dl.waiter.Wait(ctx, retries):
 			if waitInfo.Err != nil {
 				return waitInfo.Err
 			}
@@ -210,7 +210,7 @@ func (dl *DistributedLock) Extend(ctx context.Context, key, fencing string, ttl 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case waitInfo := <-dl.waiter.Wait(retries):
+		case waitInfo := <-dl.waiter.Wait(ctx, retries):
 			if waitInfo.Err != nil {
 				return waitInfo.Err
 			}

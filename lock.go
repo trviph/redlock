@@ -84,7 +84,7 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case waitInfo := <-dl.waiter.Wait(retries):
+		case waitInfo := <-dl.waiter.Wait(ctx, retries):
 			if waitInfo.Err != nil {
 				return waitInfo.Err
 			}
@@ -112,7 +112,7 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case waitInfo := <-dl.waiter.Wait(retries):
+		case waitInfo := <-dl.waiter.Wait(ctx, retries):
 			if waitInfo.Err != nil {
 				return waitInfo.Err
 			}
@@ -148,7 +148,7 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case waitInfo := <-dl.waiter.Wait(retries):
+		case waitInfo := <-dl.waiter.Wait(ctx, retries):
 			if waitInfo.Err != nil {
 				return waitInfo.Err
 			}
