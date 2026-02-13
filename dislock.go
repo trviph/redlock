@@ -31,7 +31,7 @@ type DistributedLock struct {
 // NewDistributedLock creates a new DistributedLock with the given Lock instances.
 // Each Lock should be connected to an independent Redis instance.
 // For optimal fault tolerance, use an odd number of instances (e.g., 3, 5, or 7).
-// By default, the lock retries indefinitely with 300ms max jitter.
+// By default, the lock retries indefinitely with 300ms max jitter (using `JitterWait`).
 func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *DistributedLock {
 	dl := &DistributedLock{
 		locks:            locks,

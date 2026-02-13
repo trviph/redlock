@@ -16,7 +16,7 @@ type redisClient interface {
 }
 
 // Lock provides a distributed lock backed by a single Redis instance.
-// It supports automatic retry with configurable backoff, atomic operations
+// It supports automatic retry with configurable backoff (via `Waiter`), atomic operations
 // via Lua scripts, and fencing tokens for safe lock ownership.
 type Lock struct {
 	rcli   redisClient

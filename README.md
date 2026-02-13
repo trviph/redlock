@@ -42,9 +42,11 @@ import (
 
 rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 lock := redlock.NewLock(rdb,
-    redlock.WithMaxRetry(-1),                         // Default: -1 (infinite)
-    redlock.WithMinRetryDelay(0),                     // Default: 0
-    redlock.WithJitterDuration(300*time.Millisecond), // Default: 300ms
+    redlock.WithWaiter(redlock.NewJitterWait(
+        redlock.WithJitterMaxIteration(-1),               // Default: -1 (infinite)
+        redlock.WithJitterMinDelay(0),                    // Default: 0
+        redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
+    )),
 )
 
 ctx := context.Background()
@@ -98,9 +100,11 @@ dl := redlock.NewDistributedLock(locks,
     redlock.WithClockDriftFactor(0.01),                // Default: 1%
     redlock.WithClockDriftBuffer(2*time.Millisecond),  // Default: 2ms
     redlock.WithReleaseTimeout(5*time.Second),       // Default: 5s
-    redlock.WithDistMaxRetry(-1),                    // Default: -1 (infinite)
-    redlock.WithDistMinRetryDelay(0),                // Default: 0
-    redlock.WithDistMaxJitterDuration(300*time.Millisecond), // Default: 300ms
+    redlock.WithDistWaiter(redlock.NewJitterWait(
+        redlock.WithJitterMaxIteration(-1),               // Default: -1 (infinite)
+        redlock.WithJitterMinDelay(0),                    // Default: 0
+        redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
+    )),
 )
 
 fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
@@ -111,6 +115,10 @@ defer dl.Release(ctx, "my-resource", fencing)
 ```
 
 The API mirrors `Lock` for consistency (`Acquire`, `TryAcquire`, `Extend`, `TryExtend`, `AcquireOrExtend`, `Release`).
+
+> [!NOTE]
+> Older configuration options (e.g., `WithMaxRetry`, `WithJitterDuration`) are deprecated
+> but remain available for backward compatibility when using the default `JitterWait`.
 
 > **Note:** Use an odd number of instances (3, 5, 7) for optimal fault tolerance.
 
