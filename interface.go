@@ -70,6 +70,10 @@ type Locker interface {
 
 	// Release releases a lock if the fencing token matches.
 	// This operation is atomic and will only release if the caller owns the lock.
+	//
+	// Note: For DistributedLock, this returns an error if *any* instance fails to release,
+	// even if the lock is effectively released (e.g. released on majority of nodes).
+	// Callers should inspect the error (using errors.As/Is) if granular handling is needed.
 	Release(ctx context.Context, key, fencing string) error
 }
 

@@ -172,6 +172,10 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 
 // Release releases the lock from all Redis instances.
 // Returns an error if at least one release failed, aggregating the error count.
+//
+// Note: This continues to release on all instances even if some fail.
+// An error return does not necessarily mean the lock is still held; it just means
+// clean-up failed on some nodes.
 func (dl *DistributedLock) Release(ctx context.Context, key, fencing string) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, len(dl.locks))
