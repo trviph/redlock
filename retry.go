@@ -3,6 +3,7 @@ package redlock
 import (
 	"context"
 	"crypto/rand"
+	"math"
 	"math/big"
 	"time"
 )
@@ -45,6 +46,23 @@ func DefaultJitterWait() *JitterWait {
 	}
 }
 
+// NextDelay returns the delay duration for the next retry attempt.
+// The retries argument corresponds to the number of attempts so far (1 for the first retry).
+func (jr *JitterWait) NextDelay(retries int) time.Duration {
+	var jitter time.Duration
+	if jr.maxJitterDuration > 0 {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(jr.maxJitterDuration)))
+		if err != nil {
+			// If random generation fails, we default to the max jitter duration
+			// This ensures we still wait some time and don't break the loop.
+			jitter = jr.maxJitterDuration
+		} else {
+			jitter = time.Duration(n.Int64())
+		}
+	}
+	return jr.minDelay + jitter
+}
+
 // Wait implements the Waiter interface.
 // It calculates the delay based on JitterWait configuration and waits for that duration.
 //
@@ -72,23 +90,100 @@ func (jr *JitterWait) Wait(ctx context.Context, times int) <-chan WaitInfo {
 		return waitChan
 	}
 
-	var jitter time.Duration
-	if jr.maxJitterDuration > 0 {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(jr.maxJitterDuration)))
-		if err != nil {
-			// If random generation fails, we default to the max jitter duration
-			// This ensures we still wait some time and don't break the loop.
-			jitter = jr.maxJitterDuration
-		} else {
-			jitter = time.Duration(n.Int64())
-		}
-	}
+	// times (1-based attempt count) is passed to NextDelay.
+	delay := jr.NextDelay(times)
 
 	select {
 	case <-ctx.Done():
 		waitChan <- WaitInfo{Err: ctx.Err()}
 		return waitChan
-	case at := <-time.After(jr.minDelay + jitter):
+	case at := <-time.After(delay):
+		waitChan <- WaitInfo{DoneAt: at}
+		return waitChan
+	}
+}
+
+// ExponentialWait implements a retry strategy with exponential backoff.
+// The delay increases exponentially with each attempt: delay = minDelay * (factor ^ times).
+type ExponentialWait struct {
+	// minDelay is the initial delay duration.
+	minDelay time.Duration
+
+	// maxDelay is the maximum delay cap. If 0, no maximum is applied.
+	maxDelay time.Duration
+
+	// factor is the multiplier for each retry. Should be >= 1.0.
+	factor float64
+
+	// maxIteration is the maximum number of retry attempts.
+	// -1 indicates infinite retries.
+	maxIteration int
+}
+
+// NewExponentialWait creates a new ExponentialWait with the given options.
+func NewExponentialWait(opts ...ExponentialWaitOption) *ExponentialWait {
+	ew := DefaultExponentialWait()
+	for _, opt := range opts {
+		opt(ew)
+	}
+	return ew
+}
+
+// DefaultExponentialWait returns the default configuration:
+// infinite retries, 100ms minDelay, 1min maxDelay, factor 2.0.
+func DefaultExponentialWait() *ExponentialWait {
+	return &ExponentialWait{
+		minDelay:     100 * time.Millisecond,
+		maxDelay:     1 * time.Minute,
+		factor:       2.0,
+		maxIteration: -1,
+	}
+}
+
+// NextDelay returns the delay duration for the next retry attempt.
+// The retries argument corresponds to the number of attempts so far (1 for the first retry).
+func (ew *ExponentialWait) NextDelay(retries int) time.Duration {
+	// If minDelay is 0, exponential backoff doesn't make sense.
+	if ew.minDelay <= 0 {
+		return 0
+	}
+
+	// retries=1 corresponds to the first retry (exponent 0)
+	exponent := max(retries-1, 0)
+
+	delayFloat := float64(ew.minDelay) * math.Pow(ew.factor, float64(exponent))
+	delay := time.Duration(delayFloat)
+
+	if ew.maxDelay > 0 && delay > ew.maxDelay {
+		delay = ew.maxDelay
+	}
+
+	return delay
+}
+
+// Wait implements the Waiter interface.
+func (ew *ExponentialWait) Wait(ctx context.Context, times int) <-chan WaitInfo {
+	waitChan := make(chan WaitInfo, 1)
+	defer close(waitChan)
+
+	// If times == 0, it is the initial attempt, so we return immediately.
+	if times == 0 {
+		waitChan <- WaitInfo{DoneAt: time.Now()}
+		return waitChan
+	}
+
+	if ew.maxIteration >= 0 && times > ew.maxIteration {
+		waitChan <- WaitInfo{Err: ErrMaxRetryExceeded}
+		return waitChan
+	}
+
+	delay := ew.NextDelay(times)
+
+	select {
+	case <-ctx.Done():
+		waitChan <- WaitInfo{Err: ctx.Err()}
+		return waitChan
+	case at := <-time.After(delay):
 		waitChan <- WaitInfo{DoneAt: at}
 		return waitChan
 	}

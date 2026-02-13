@@ -78,4 +78,5 @@ var (
 	_ Locker = (*Lock)(nil)
 	_ Locker = (*DistributedLock)(nil)
 	_ Waiter = (*JitterWait)(nil)
+	_ Waiter = (*ExponentialWait)(nil)
 )

@@ -26,3 +26,34 @@ func WithMaxJitterDuration(maxJitterDuration time.Duration) JitterWaitOption {
 		jw.maxJitterDuration = maxJitterDuration
 	}
 }
+
+// ExponentialWaitOption defines a function that configures an ExponentialWait instance.
+type ExponentialWaitOption func(*ExponentialWait)
+
+// WithExpMaxIteration sets the maximum number of retry attempts.
+func WithExpMaxIteration(maxIteration int) ExponentialWaitOption {
+	return func(ew *ExponentialWait) {
+		ew.maxIteration = maxIteration
+	}
+}
+
+// WithExpMinDelay sets the initial delay duration.
+func WithExpMinDelay(minDelay time.Duration) ExponentialWaitOption {
+	return func(ew *ExponentialWait) {
+		ew.minDelay = minDelay
+	}
+}
+
+// WithExpMaxDelay sets the maximum delay cap.
+func WithExpMaxDelay(maxDelay time.Duration) ExponentialWaitOption {
+	return func(ew *ExponentialWait) {
+		ew.maxDelay = maxDelay
+	}
+}
+
+// WithExpFactor sets the multiplier for each retry.
+func WithExpFactor(factor float64) ExponentialWaitOption {
+	return func(ew *ExponentialWait) {
+		ew.factor = factor
+	}
+}
