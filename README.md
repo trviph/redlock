@@ -17,6 +17,9 @@ A distributed lock implementation in Go backed by Redis, supporting both single-
       - [Key Methods](#key-methods)
     - [Multi-Instance (Redlock Algorithm)](#multi-instance-redlock-algorithm)
     - [Watchdog Pattern (Auto-Renewal)](#watchdog-pattern-auto-renewal)
+    - [Custom Retry Strategies](#custom-retry-strategies)
+      - [Example: Fixed Delay Waiter](#example-fixed-delay-waiter)
+      - [Implementation Nuances](#implementation-nuances)
   - [Error Handling](#error-handling)
     - [Unwrapping Joined Errors](#unwrapping-joined-errors)
   - [Testing](#testing)
@@ -48,6 +51,16 @@ lock := redlock.NewLock(rdb,
         redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
     )),
 )
+
+// Alternatively, use Exponential Backoff:
+// lock := redlock.NewLock(rdb,
+//     redlock.WithWaiter(redlock.NewExponentialWait(
+//         redlock.WithExpMinDelay(100*time.Millisecond), // Start wait time
+//         redlock.WithExpMaxDelay(10*time.Second),      // Max wait time cap
+//         redlock.WithExpFactor(2.0),                    // Multiplier
+//         redlock.WithExpMaxIteration(10),               // Max retry attempts
+//     )),
+// )
 
 ctx := context.Background()
 key := "my-resource"
@@ -105,6 +118,8 @@ dl := redlock.NewDistributedLock(locks,
         redlock.WithJitterMinDelay(0),                    // Default: 0
         redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
     )),
+    // Or use ExponentialWait:
+    // redlock.WithDistWaiter(redlock.NewExponentialWait(...)),
 )
 
 fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
@@ -205,6 +220,60 @@ go wd.Run(ctx)
 > **Design Rationale:** This behavior is intentional to handle cases where the watchdog is started before the lock is successfully acquired (e.g., during a retry loop) or to survive transient network failures. It avoids prematurely killing the watchdog due to temporary errors.
 >
 > Always ensure you cancel the context when the operation is finished or if you detect that the lock has been lost.
+
+### Custom Retry Strategies
+
+You can implement your own retry logic by satisfying the `Waiter` interface:
+
+```go
+type Waiter interface {
+    Wait(ctx context.Context, times int) <-chan WaitInfo
+}
+```
+
+#### Example: Fixed Delay Waiter
+
+```go
+type FixedWait struct {
+    delay time.Duration
+    max   int
+}
+
+func (f *FixedWait) Wait(ctx context.Context, times int) <-chan redlock.WaitInfo {
+    ch := make(chan redlock.WaitInfo, 1) // Buffered to prevent leaks
+    defer close(ch)
+
+    // 1. Handle initial attempt (times=0) immediately
+    if times == 0 {
+        ch <- redlock.WaitInfo{DoneAt: time.Now()}
+        return ch
+    }
+
+    // 2. check max retries
+    if f.max >= 0 && times > f.max {
+        ch <- redlock.WaitInfo{Err: redlock.ErrMaxRetryExceeded}
+        return ch
+    }
+
+    // 3. Wait for delay or context cancellation
+    select {
+    case <-ctx.Done():
+        ch <- redlock.WaitInfo{Err: ctx.Err()}
+    case t := <-time.After(f.delay):
+        ch <- redlock.WaitInfo{DoneAt: t}
+    }
+    
+    return ch
+}
+```
+
+#### Implementation Nuances
+
+- **0-indexed `times`**: The `times` argument starts at `0` for the initial acquisition attempt. Your implementation **must** return immediately (no delay) when `times == 0`.
+- **Buffered Channel**: Always use a buffered channel (`make(chan WaitInfo, 1)`). This ensures that if the caller cancels or stops waiting, your goroutine (if you spawned one) or the channel send doesn't block forever.
+- **Context Handling**: You must respect `ctx.Done()` and return `WaitInfo{Err: ctx.Err()}` immediately if cancelled.
+- **Error Propagation**: Return `ErrMaxRetryExceeded` when your retry limit is reached.
+
 
 ## Error Handling
 

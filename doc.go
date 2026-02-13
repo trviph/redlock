@@ -18,6 +18,11 @@
 //	        redlock.WithJitterMaxIteration(5),
 //	        redlock.WithMaxJitterDuration(200*time.Millisecond),
 //	    )),
+//	    // Or use exponential backoff:
+//	    // redlock.WithWaiter(redlock.NewExponentialWait(
+//	    //     redlock.WithExpMinDelay(100*time.Millisecond),
+//	    //     redlock.WithExpMaxDelay(5*time.Second),
+//	    // )),
 //	)
 //	fencing, err := lock.Acquire(ctx, "my-resource", 30*time.Second)
 //	if err != nil {
@@ -62,7 +67,7 @@
 // # Configuration
 //
 // Both lock types use functional options for configuration:
-//   - [Lock]: [WithWaiter] (and [JitterWaitOption]s for [NewJitterWait])
+//   - [Lock]: [WithWaiter] (and [JitterWaitOption]s for [NewJitterWait], or [ExponentialWaitOption]s for [NewExponentialWait])
 //   - [DistributedLock]: [WithClockDriftFactor], [WithClockDriftBuffer], [WithReleaseTimeout],
 //     [WithDistWaiter]
 //
