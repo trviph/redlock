@@ -318,6 +318,11 @@ if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
 }
 ```
 
+> [!CAUTION]
+> **Release Error Handling**: The `Release` method for `DistributedLock` will return an error if **any** single Redis instance fails to release the lock, even if the release was successful on the majority of nodes (quorum).
+>
+> This ensures you are aware of potential cleanup issues. It does **not** necessarily mean the lock is still valid or held. You should inspect the error (using `errors.Join` unwrapping as shown above) to decide how to proceed (e.g., ignore if it was a minor network blip on one node).
+
 ## Testing
 
 This project uses Docker Compose for integration testing:
