@@ -176,14 +176,26 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 // Note: This continues to release on all instances even if some fail.
 // An error return does not necessarily mean the lock is still held; it just means
 // clean-up failed on some nodes.
+//
+// Use [DistributedLock.ReleaseWithCount] if you need the number of successful releases.
 func (dl *DistributedLock) Release(ctx context.Context, key, fencing string) error {
+	_, err := dl.ReleaseWithCount(ctx, key, fencing)
+	return err
+}
+
+// ReleaseWithCount releases the lock from all Redis instances and returns the count of successful releases.
+// Returns the number of successful releases and an error if at least one release failed.
+func (dl *DistributedLock) ReleaseWithCount(ctx context.Context, key, fencing string) (int, error) {
 	var wg sync.WaitGroup
+	var successCount atomic.Int32
 	errChan := make(chan error, len(dl.locks))
 
 	for _, lock := range dl.locks {
 		wg.Go(func() {
 			if err := lock.Release(ctx, key, fencing); err != nil {
 				errChan <- err
+			} else {
+				successCount.Add(1)
 			}
 		})
 	}
@@ -195,9 +207,9 @@ func (dl *DistributedLock) Release(ctx context.Context, key, fencing string) err
 		errs = append(errs, e)
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("release failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
+		return int(successCount.Load()), fmt.Errorf("release failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
 	}
-	return nil
+	return int(successCount.Load()), nil
 }
 
 // Extend extends the TTL of an existing lock across all Redis instances concurrently.
