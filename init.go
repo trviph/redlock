@@ -6,9 +6,6 @@ import (
 )
 
 func init() {
-	// Initialize closedChan for retry logic
-	close(closedChan)
-
 	// Calculate SHA1 sums for Lua scripts
 	shaAcquireOrExtend = sha1Sum(scriptAcquireOrExtend)
 	shaExtend = sha1Sum(scriptExtend)

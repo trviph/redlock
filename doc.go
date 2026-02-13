@@ -5,7 +5,7 @@
 // # Lock (Single Instance)
 //
 // [Lock] provides a distributed lock backed by a single Redis instance. It supports:
-//   - Automatic retry with configurable jitter and backoff
+//   - Automatic retry with configurable jitter and backoff via [Waiter] interface
 //   - Atomic acquisition and release using Lua scripts
 //   - Fencing tokens (UUIDs) to prevent unsafe lock hand-off
 //   - Lock extension for long-running operations
@@ -14,8 +14,15 @@
 // Example usage:
 //
 //	lock := redlock.NewLock(redisClient,
-//	    redlock.WithMaxRetry(5),
-//	    redlock.WithJitterDuration(200*time.Millisecond),
+//	    redlock.WithWaiter(redlock.NewJitterWait(
+//	        redlock.WithJitterMaxIteration(5),
+//	        redlock.WithMaxJitterDuration(200*time.Millisecond),
+//	    )),
+//	    // Or use exponential backoff:
+//	    // redlock.WithWaiter(redlock.NewExponentialWait(
+//	    //     redlock.WithExpMinDelay(100*time.Millisecond),
+//	    //     redlock.WithExpMaxDelay(5*time.Second),
+//	    // )),
 //	)
 //	fencing, err := lock.Acquire(ctx, "my-resource", 30*time.Second)
 //	if err != nil {
@@ -39,6 +46,10 @@
 //	dl := redlock.NewDistributedLock(locks,
 //	    redlock.WithClockDriftFactor(0.01),
 //	    redlock.WithClockDriftBuffer(2*time.Millisecond),
+//	    redlock.WithDistWaiter(redlock.NewJitterWait(
+//	        redlock.WithJitterMaxIteration(-1),
+//	        redlock.WithMaxJitterDuration(300*time.Millisecond),
+//	    )),
 //	)
 //	fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
 //	if err != nil {
@@ -56,9 +67,12 @@
 // # Configuration
 //
 // Both lock types use functional options for configuration:
-//   - [Lock]: [WithMaxRetry], [WithJitterDuration], [WithMinRetryDelay]
+//   - [Lock]: [WithWaiter] (and [JitterWaitOption]s for [NewJitterWait], or [ExponentialWaitOption]s for [NewExponentialWait])
 //   - [DistributedLock]: [WithClockDriftFactor], [WithClockDriftBuffer], [WithReleaseTimeout],
-//     [WithDistMaxRetry], [WithDistMinRetryDelay], [WithDistMaxJitterDuration]
+//     [WithDistWaiter]
+//
+// Note: Older configuration options (e.g., [WithMaxRetry], [WithJitterDuration]) are deprecated
+// but remain available for backward compatibility when using the default [JitterWait].
 //
 // # Watchdog Pattern
 //

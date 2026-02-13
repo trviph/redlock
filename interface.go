@@ -5,6 +5,33 @@ import (
 	"time"
 )
 
+type WaitInfo struct {
+	DoneAt time.Time
+	Err    error
+}
+
+// Waiter defines the interface for controlling retry behavior and backoff strategies.
+// Implementations of this interface determine how long to wait between retry attempts
+// and when to stop retrying.
+type Waiter interface {
+	// Wait returns a channel that will receive a WaitInfo struct after the appropriate retry delay.
+	//
+	// Parameters:
+	//   - ctx: The context to monitor for cancellation. If the context is cancelled while waiting,
+	//          Wait must return immediately with a WaitInfo containing the context error.
+	//   - times: The current attempt number (0-indexed). 0 indicates the initial attempt.
+	//
+	// Returns:
+	//   A receive-only channel of WaitInfo.
+	//   - If the retry limit is exceeded or the operation should stop, the channel will receive
+	//     a WaitInfo with an Err (e.g., ErrMaxRetryExceeded).
+	//   - If the wait completes successfully, the channel will receive a WaitInfo with DoneAt set
+	//     to the current time.
+	//   - The channel should be buffered or the sender should not block if the receiver stops listening
+	//     (though typically the caller waits on the channel).
+	Wait(ctx context.Context, times int) <-chan WaitInfo
+}
+
 // Locker defines the common interface implemented by both Lock and DistributedLock.
 // This allows code to be written against the interface and work with either implementation.
 type Locker interface {
@@ -50,4 +77,6 @@ type Locker interface {
 var (
 	_ Locker = (*Lock)(nil)
 	_ Locker = (*DistributedLock)(nil)
+	_ Waiter = (*JitterWait)(nil)
+	_ Waiter = (*ExponentialWait)(nil)
 )

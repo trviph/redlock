@@ -26,18 +26,19 @@ type WatchItem struct {
 // This bug will probably never be fixed. Do not use WatchDog with DistributedLock if you are not
 // comfortable with this uncertainty.
 type WatchDog struct {
-	lock      Locker
-	cbCtx     context.Context
-	callbacks []WatchDogCallback
-	items     []*WatchItem
+	lock     Locker
+	errCBCtx context.Context
+	extCBCtx context.Context
+	errCBs   []WatchDogCallback
+	onExtCBs []WatchDogCallback
+	items    []*WatchItem
 }
 
 // NewWatchDog creates a new WatchDog instance with the corresponding lock provider and options.
 // For simpler usage, where you don't care about error handling, see [Watch] and [WatchWithInterval].
 func NewWatchDog(lock Locker, opts ...WatchDogOption) *WatchDog {
 	w := &WatchDog{
-		cbCtx: context.Background(),
-		lock:  lock,
+		lock: lock,
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -58,15 +59,31 @@ func (w *WatchDog) Run(ctx context.Context) {
 			for {
 				select {
 				case <-ctx.Done():
-					for _, cb := range w.callbacks {
-						go cb(w.cbCtx, item, ctx.Err())
+					callCtx := w.errCBCtx
+					if callCtx == nil {
+						callCtx = ctx
+					}
+					for _, cb := range w.errCBs {
+						go cb(callCtx, item, ctx.Err())
 					}
 					return
 				case <-ticker.C:
 					err := w.lock.TryExtend(ctx, item.Key, item.Fencing, item.TTL)
 					if err != nil {
-						for _, cb := range w.callbacks {
-							go cb(w.cbCtx, item, err)
+						callCtx := w.errCBCtx
+						if callCtx == nil {
+							callCtx = ctx
+						}
+						for _, cb := range w.errCBs {
+							go cb(callCtx, item, err)
+						}
+					} else {
+						callCtx := w.extCBCtx
+						if callCtx == nil {
+							callCtx = ctx
+						}
+						for _, cb := range w.onExtCBs {
+							go cb(callCtx, item, nil)
 						}
 					}
 				}

@@ -25,20 +25,20 @@ type DistributedLock struct {
 	clockDriftFactor float64
 	clockDriftBuffer time.Duration
 	releaseTimeout   time.Duration
-	rc               retryConfig
+	waiter           Waiter
 }
 
 // NewDistributedLock creates a new DistributedLock with the given Lock instances.
 // Each Lock should be connected to an independent Redis instance.
 // For optimal fault tolerance, use an odd number of instances (e.g., 3, 5, or 7).
-// By default, the lock retries indefinitely with 300ms max jitter.
+// By default, the lock retries indefinitely with 300ms max jitter (using `JitterWait`).
 func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *DistributedLock {
 	dl := &DistributedLock{
 		locks:            locks,
 		clockDriftFactor: 0.01,                 // 1% clock drift factor, as recommended by the Redlock paper
 		clockDriftBuffer: 2 * time.Millisecond, // Small constant for network round-trip variance
 		releaseTimeout:   5 * time.Second,
-		rc:               defaultRetryConfig(),
+		waiter:           DefaultJitterWait(),
 	}
 	for _, opt := range opts {
 		opt(dl)
@@ -86,10 +86,11 @@ func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.rc.wait(retries):
-			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
-				return ErrMaxRetryExceeded
+		case waitInfo := <-dl.waiter.Wait(ctx, retries):
+			if waitInfo.Err != nil {
+				return waitInfo.Err
 			}
+
 			err := dl.TryAcquireWithFencing(ctx, key, fencing, ttl)
 			if err == nil {
 				return nil
@@ -209,10 +210,11 @@ func (dl *DistributedLock) Extend(ctx context.Context, key, fencing string, ttl 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-dl.rc.wait(retries):
-			if retries > dl.rc.maxRetry && dl.rc.maxRetry >= 0 {
-				return ErrMaxRetryExceeded
+		case waitInfo := <-dl.waiter.Wait(ctx, retries):
+			if waitInfo.Err != nil {
+				return waitInfo.Err
 			}
+
 			err := dl.TryExtend(ctx, key, fencing, ttl)
 			if err == nil {
 				return nil
