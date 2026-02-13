@@ -8,11 +8,28 @@ import (
 // WatchDogOption configures the WatchDog.
 type WatchDogOption func(*WatchDog)
 
-// WithCallbacks overrides the context for callbacks and appends new callbacks.
-func WithCallbacks(cbCtx context.Context, callbacks ...WatchDogCallback) WatchDogOption {
+// WithErrorCallbacks overrides the context for error callbacks and appends new callbacks.
+func WithErrorCallbacks(cbCtx context.Context, callbacks ...WatchDogCallback) WatchDogOption {
 	return func(w *WatchDog) {
-		w.cbCtx = cbCtx
-		w.callbacks = append(w.callbacks, callbacks...)
+		w.errCBCtx = cbCtx
+		w.errCBs = append(w.errCBs, callbacks...)
+	}
+}
+
+// WithCallbacks overrides the context for error callbacks and appends new callbacks.
+//
+// Deprecated: Use [WithErrorCallbacks] instead.
+// This function was renamed to clarify that it only handles error callbacks.
+// For successful lock extensions, use [WithExtensionCallbacks].
+func WithCallbacks(cbCtx context.Context, callbacks ...WatchDogCallback) WatchDogOption {
+	return WithErrorCallbacks(cbCtx, callbacks...)
+}
+
+// WithExtensionCallbacks overrides the context for extension callbacks and appends new callbacks.
+func WithExtensionCallbacks(cbCtx context.Context, callbacks ...WatchDogCallback) WatchDogOption {
+	return func(w *WatchDog) {
+		w.extCBCtx = cbCtx
+		w.onExtCBs = append(w.onExtCBs, callbacks...)
 	}
 }
 

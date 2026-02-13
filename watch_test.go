@@ -27,20 +27,29 @@ func TestWatchDog(t *testing.T) {
 
 		// Use a wait group to wait for at least one extension
 		var extended atomic.Bool
+		extensionCh := make(chan struct{}, 1)
 
-		// Setup WatchDog with a callback to track success (via absence of error)
-		// Since WatchDog only invokes callback on error, we can't directly know when it succeeds via callback.
-		// Instead we verify the lock holds.
-
+		// Setup WatchDog with a callback via option
 		wd := redlock.NewWatchDog(locker,
 			redlock.WithItem(key, fencing, ttl, ttl/4),
+			redlock.WithExtensionCallbacks(context.Background(), func(ctx context.Context, item *redlock.WatchItem, _ error) {
+				select {
+				case extensionCh <- struct{}{}:
+				default:
+				}
+			}),
 		)
 
 		ctx := t.Context()
 		go wd.Run(ctx)
 
-		// Wait for > TTL to ensure it was extended
-		time.Sleep(ttl + ttl/2)
+		// Wait for extension signal instead of sleep
+		select {
+		case <-extensionCh:
+			// Success
+		case <-time.After(ttl + ttl/2):
+			t.Fatal("Timeout waiting for extension")
+		}
 
 		// Check if lock is still held
 		err = locker.TryAcquireWithFencing(context.Background(), key, "other", ttl)
