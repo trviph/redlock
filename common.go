@@ -12,3 +12,15 @@ func newFencingToken() (string, error) {
 	}
 	return id.String(), nil
 }
+
+// ReleaseStatus contains the result of a release operation.
+type ReleaseStatus struct {
+	TotalLocks    int
+	SuccessCount  int
+	QuorumReached bool
+}
+
+// quorum returns the number of instances required for a quorum.
+func quorum(total int) int {
+	return total/2 + 1
+}

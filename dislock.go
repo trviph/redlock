@@ -156,7 +156,7 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 	wg.Wait()
 	close(errChan)
 
-	if win.Load() >= int32(len(dl.locks)/2+1) {
+	if win.Load() >= int32(quorum(len(dl.locks))) {
 		// Clock drift check: ensure the lock is still valid
 		elapsed := time.Since(startTime)
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)
@@ -177,15 +177,15 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 // An error return does not necessarily mean the lock is still held; it just means
 // clean-up failed on some nodes.
 //
-// Use [DistributedLock.ReleaseWithCount] if you need the number of successful releases.
+// Use [DistributedLock.ReleaseWithCount] if you need detailed release information.
 func (dl *DistributedLock) Release(ctx context.Context, key, fencing string) error {
 	_, err := dl.ReleaseWithCount(ctx, key, fencing)
 	return err
 }
 
-// ReleaseWithCount releases the lock from all Redis instances and returns the count of successful releases.
-// Returns the number of successful releases and an error if at least one release failed.
-func (dl *DistributedLock) ReleaseWithCount(ctx context.Context, key, fencing string) (int, error) {
+// ReleaseWithCount releases the lock from all Redis instances and returns the status of releases.
+// Returns a ReleaseStatus struct and an error if at least one release failed.
+func (dl *DistributedLock) ReleaseWithCount(ctx context.Context, key, fencing string) (ReleaseStatus, error) {
 	var wg sync.WaitGroup
 	var successCount atomic.Int32
 	errChan := make(chan error, len(dl.locks))
@@ -202,14 +202,25 @@ func (dl *DistributedLock) ReleaseWithCount(ctx context.Context, key, fencing st
 	wg.Wait()
 	close(errChan)
 
+	status := ReleaseStatus{
+		TotalLocks:   len(dl.locks),
+		SuccessCount: int(successCount.Load()),
+	}
+	status.QuorumReached = status.SuccessCount >= quorum(len(dl.locks))
+
 	errs := make([]error, 0, len(dl.locks))
 	for e := range errChan {
 		errs = append(errs, e)
 	}
 	if len(errs) > 0 {
-		return int(successCount.Load()), fmt.Errorf("release failed on %d of %d instance(s): %w", len(errs), len(dl.locks), errors.Join(errs...))
+		return status, fmt.Errorf(
+			"release failed on %d of %d instance(s): %w",
+			len(errs),
+			len(dl.locks),
+			errors.Join(errs...),
+		)
 	}
-	return int(successCount.Load()), nil
+	return status, nil
 }
 
 // Extend extends the TTL of an existing lock across all Redis instances concurrently.
@@ -319,7 +330,7 @@ func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key, fencing str
 	wg.Wait()
 	close(errChan)
 
-	if win.Load() >= int32(len(dl.locks)/2+1) {
+	if win.Load() >= int32(quorum(len(dl.locks))) {
 		// Clock drift check: ensure the lock is still valid
 		elapsed := time.Since(startTime)
 		drift := time.Duration(float64(ttl) * dl.clockDriftFactor)

@@ -60,7 +60,7 @@
 // # Fencing Tokens
 //
 // Both lock types return a fencing token (UUID string) upon successful acquisition.
-// This token must be passed to [Lock.Release] or [DistributedLock.Release] to ensure
+// This token must be passed to [Lock.Release] or [DistributedLock.Release] (or [DistributedLock.ReleaseWithCount]) to ensure
 // only the lock owner can release it. Fencing tokens can also be used by downstream
 // systems to detect stale lock holders.
 //

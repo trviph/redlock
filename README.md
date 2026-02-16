@@ -78,14 +78,15 @@ defer lock.Release(ctx, key, fencing)
 
 #### Key Methods
 
-| Method            | Description                                                    |
-| ----------------- | -------------------------------------------------------------- |
-| `Acquire`         | Acquires lock with retry, returns fencing token                |
-| `TryAcquire`      | Single attempt, no retry; returns `ErrLockAlreadyHeld` if held |
-| `Extend`          | Extends TTL with retry if fencing token matches                |
-| `TryExtend`       | Single extend attempt; returns `ErrLockNotHeld` on failure     |
-| `AcquireOrExtend` | Extends if held, otherwise acquires (with retry)               |
-| `Release`         | Atomically releases lock if fencing token matches              |
+| Method             | Description                                                    |
+| ------------------ | -------------------------------------------------------------- |
+| `Acquire`          | Acquires lock with retry, returns fencing token                |
+| `TryAcquire`       | Single attempt, no retry; returns `ErrLockAlreadyHeld` if held |
+| `Extend`           | Extends TTL with retry if fencing token matches                |
+| `TryExtend`        | Single extend attempt; returns `ErrLockNotHeld` on failure     |
+| `AcquireOrExtend`  | Extends if held, otherwise acquires (with retry)               |
+| `Release`          | Atomically releases lock if fencing token matches              |
+| `ReleaseWithCount` | Releases lock and returns `ReleaseStatus` with detailed stats  |
 
 > [!NOTE]
 > The `fencing` token returned by `Acquire` is a random UUID used solely to identify the lock owner and prevent race conditions when extending or releasing the lock. It is **not** a monotonically increasing number and cannot be used for external shielding (e.g., preventing split-brain writes in storage systems) as described in [Martin Kleppmann's critique](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html).
@@ -129,7 +130,7 @@ if err != nil {
 defer dl.Release(ctx, "my-resource", fencing)
 ```
 
-The API mirrors `Lock` for consistency (`Acquire`, `TryAcquire`, `Extend`, `TryExtend`, `AcquireOrExtend`, `Release`).
+The API mirrors `Lock` for consistency (`Acquire`, `TryAcquire`, `Extend`, `TryExtend`, `AcquireOrExtend`, `Release`). It also provides `ReleaseWithCount` for detailed release statistics.
 
 > [!NOTE]
 > Older configuration options (e.g., `WithMaxRetry`, `WithJitterDuration`) are deprecated
@@ -322,6 +323,8 @@ if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
 > **Release Error Handling**: The `Release` method for `DistributedLock` will return an error if **any** single Redis instance fails to release the lock, even if the release was successful on the majority of nodes (quorum).
 >
 > This ensures you are aware of potential cleanup issues. It does **not** necessarily mean the lock is still valid or held. You should inspect the error (using `errors.Join` unwrapping as shown above) to decide how to proceed (e.g., ignore if it was a minor network blip on one node).
+>
+> Use `ReleaseWithCount` if you need detailed release information, which returns a `ReleaseStatus` containing the total lock count, success count, whether quorum was reached, and any aggregated errors.
 
 ## Testing
 
