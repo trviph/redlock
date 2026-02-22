@@ -11,6 +11,9 @@ A distributed lock implementation in Go backed by Redis, supporting both single-
 
 - [Redlock](#redlock)
   - [Table of Contents](#table-of-contents)
+  - [Architecture \& Trade-offs](#architecture--trade-offs)
+    - [Core Components](#core-components)
+  - [Known Quirks \& Limitations](#known-quirks--limitations)
   - [Installation](#installation)
   - [Usage](#usage)
     - [Single Instance](#single-instance)
@@ -18,12 +21,34 @@ A distributed lock implementation in Go backed by Redis, supporting both single-
     - [Multi-Instance (Redlock Algorithm)](#multi-instance-redlock-algorithm)
     - [Watchdog Pattern (Auto-Renewal)](#watchdog-pattern-auto-renewal)
     - [Custom Retry Strategies](#custom-retry-strategies)
-      - [Example: Fixed Delay Waiter](#example-fixed-delay-waiter)
-      - [Implementation Nuances](#implementation-nuances)
   - [Error Handling](#error-handling)
     - [Unwrapping Joined Errors](#unwrapping-joined-errors)
   - [Testing](#testing)
   - [License](#license)
+
+## Architecture & Trade-offs
+
+### Core Components
+
+- **`Lock` (Single Instance)**
+  - **Trade-off:** High performance (single network hop) vs. Lower availability (fails if the single Redis node goes down).
+  - **Best for:** Non-critical background jobs where occasional failure isn't catastrophic.
+- **`DistributedLock` (Multi-Instance)**
+  - **Trade-off:** High availability and safety (survives `N/2` node failures) vs. Lower performance (multiple network hops).
+  - **Best for:** Critical distributed coordination where safety and consensus are paramount.
+- **`Waiter` (Retry Strategies)**
+  - Controls backoff behavior (`JitterWait` vs `ExponentialWait`) to prevent thundering herd scenarios across clients trying to claim the same resource.
+- **Fencing Tokens**
+  - UUIDs generated upon lock acquisition. These are essential for pairing a lock owner with lock release/extension logic natively within the package.
+  - *Note:* They are random UUIDs, not monotonically increasing counters, and cannot be used for external shielding (e.g., preventing split-brain writes in database storage).
+
+---
+
+## Known Quirks & Limitations
+
+- **Partial Extensions on Quorum Failure:** When using `DistributedLock`, the `Extend` and `TryExtend` methods (and by extension the `Watch`, `WatchWithInterval`, and `WatchDog` utilities) suffer from a partial extension issue. If extending the lock fails to achieve quorum across the independent Redis instances, the successfully extended instances are **not** automatically rolled back. They will remain locked until their TTL naturally expires.
+
+---
 
 ## Installation
 
@@ -44,23 +69,22 @@ import (
 )
 
 rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-lock := redlock.NewLock(rdb,
-    redlock.WithWaiter(redlock.NewJitterWait(
-        redlock.WithJitterMaxIteration(-1),               // Default: -1 (infinite)
-        redlock.WithJitterMinDelay(0),                    // Default: 0
-        redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
-    )),
+waiter := redlock.NewJitterWait(
+    redlock.WithJitterMaxIteration(-1),                  // Default: -1 (infinite)
+    redlock.WithJitterMinDelay(0),                       // Default: 0
+    redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
 )
 
+lock := redlock.NewLock(rdb, redlock.WithWaiter(waiter))
+
 // Alternatively, use Exponential Backoff:
-// lock := redlock.NewLock(rdb,
-//     redlock.WithWaiter(redlock.NewExponentialWait(
-//         redlock.WithExpMinDelay(100*time.Millisecond), // Start wait time
-//         redlock.WithExpMaxDelay(10*time.Second),      // Max wait time cap
-//         redlock.WithExpFactor(2.0),                    // Multiplier
-//         redlock.WithExpMaxIteration(10),               // Max retry attempts
-//     )),
+// expWaiter := redlock.NewExponentialWait(
+//     redlock.WithExpMinDelay(100*time.Millisecond), // Start wait time
+//     redlock.WithExpMaxDelay(10*time.Second),       // Max wait time cap
+//     redlock.WithExpFactor(2.0),                    // Multiplier
+//     redlock.WithExpMaxIteration(10),               // Max retry attempts
 // )
+// lock := redlock.NewLock(rdb, redlock.WithWaiter(expWaiter))
 
 ctx := context.Background()
 key := "my-resource"
@@ -89,15 +113,13 @@ defer lock.Release(ctx, key, fencing)
 | `ReleaseWithCount` | Releases lock and returns `ReleaseStatus` with detailed stats  |
 
 > [!NOTE]
-> The `fencing` token returned by `Acquire` is a random UUID used solely to identify the lock owner and prevent race conditions when extending or releasing the lock. It is **not** a monotonically increasing number and cannot be used for external shielding (e.g., preventing split-brain writes in storage systems) as described in [Martin Kleppmann's critique](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html).
->
 > If you require strict monotonic fencing tokens for external shielding, you can generate them yourself (e.g., using a separate counter) and pass them to the `AcquireWithFencing` or `TryAcquireWithFencing` methods. However, if strong consistency is a strict requirement, it is recommended to consider systems designed for it, such as **etcd** or **Zookeeper**, instead of Redis.
 
 ---
 
 ### Multi-Instance (Redlock Algorithm)
 
-`DistributedLock` implements the Redlock algorithm for higher availability. It acquires locks across multiple independent Redis instances and requires a quorum (N/2 + 1) to succeed.
+`DistributedLock` implements the Redlock algorithm for higher availability. It requires a quorum (N/2 + 1) to succeed.
 
 ```go
 redis1 := redis.NewClient(&redis.Options{Addr: "redis1:6379"})
@@ -110,17 +132,17 @@ locks := []*redlock.Lock{
     redlock.NewLock(redis3),
 }
 
+waiter := redlock.NewJitterWait(
+    redlock.WithJitterMaxIteration(-1),                  // Default: -1 (infinite)
+    redlock.WithJitterMinDelay(0),                       // Default: 0
+    redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
+)
+
 dl := redlock.NewDistributedLock(locks,
-    redlock.WithClockDriftFactor(0.01),                // Default: 1%
-    redlock.WithClockDriftBuffer(2*time.Millisecond),  // Default: 2ms
-    redlock.WithReleaseTimeout(5*time.Second),       // Default: 5s
-    redlock.WithDistWaiter(redlock.NewJitterWait(
-        redlock.WithJitterMaxIteration(-1),               // Default: -1 (infinite)
-        redlock.WithJitterMinDelay(0),                    // Default: 0
-        redlock.WithMaxJitterDuration(300*time.Millisecond), // Default: 300ms
-    )),
-    // Or use ExponentialWait:
-    // redlock.WithDistWaiter(redlock.NewExponentialWait(...)),
+    redlock.WithClockDriftFactor(0.01),               // Default: 1%
+    redlock.WithClockDriftBuffer(2*time.Millisecond), // Default: 2ms
+    redlock.WithReleaseTimeout(5*time.Second),        // Default: 5s
+    redlock.WithDistWaiter(waiter),
 )
 
 fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
@@ -132,11 +154,8 @@ defer dl.Release(ctx, "my-resource", fencing)
 
 The API mirrors `Lock` for consistency (`Acquire`, `TryAcquire`, `Extend`, `TryExtend`, `AcquireOrExtend`, `Release`). It also provides `ReleaseWithCount` for detailed release statistics.
 
-> [!NOTE]
-> Older configuration options (e.g., `WithMaxRetry`, `WithJitterDuration`) are deprecated
-> but remain available for backward compatibility when using the default `JitterWait`.
-
-> **Note:** Use an odd number of instances (3, 5, 7) for optimal fault tolerance.
+> [!TIP]
+> Use an odd number of instances (3, 5, 7) for optimal fault tolerance.
 
 ---
 
@@ -147,84 +166,54 @@ For long-running operations where duration is unknown, use a watchdog goroutine 
 ```go
 fencing, _ := lock.Acquire(ctx, key, 10*time.Second)
 
-watchdogCtx, stop := context.WithCancel(ctx)
-defer stop()
-
-go func() {
-    ticker := time.NewTicker(5 * time.Second) // Extend at ~half TTL
-    defer ticker.Stop()
-    for {
-        select {
-        case <-watchdogCtx.Done():
-            return
-        case <-ticker.C:
-            lock.TryExtend(watchdogCtx, key, fencing, 10*time.Second)
-        }
-    }
-}()
-
-// Do long-running work...
-lock.Release(ctx, key, fencing)
-```
-
-Alternatively, you can use the built-in `Watch` helper which simplifies this pattern:
-
-```go
-fencing, err := lock.Acquire(ctx, key, ttl)
-if err != nil {
-    // Handle error
-}
-
 watchCtx, watchCancel := context.WithCancel(ctx)
 defer watchCancel()
 
-redlock.Watch(watchCtx, lock, key, fencing, ttl)
+redlock.Watch(watchCtx, lock, key, fencing, 10*time.Second)
 
 // Do long-running work...
 
-watchCancel() // Stop the watchdog
+watchCancel() // Stop the watchdog explicitly
 lock.Release(ctx, key, fencing)
 ```
 
-You can also customize the extension interval using `WatchWithInterval`:
+You can customize the extension interval using `WatchWithInterval` or utilize the full `WatchDog` struct for advanced callback handling, such as **early cancellation**:
 
 ```go
-// Check every 1 second instead of default ttl/2
-redlock.WatchWithInterval(watchCtx, lock, key, fencing, ttl, 1*time.Second)
-```
+watchCtx, watchCancel := context.WithCancel(ctx)
+defer watchCancel()
 
-For more control on handling errors (logging, early stopping), use `WatchDog`:
-
-```go
-// Define a callback to handle errors
+// Define a callback to handle errors and trigger early cancellation if the lock is lost
 errHandler := func(ctx context.Context, item *redlock.WatchItem, err error) {
     if err == context.Canceled {
-        // Context cancellation is always the last error received
         log.Printf("WatchDog stopped for key %s", item.Key)
         return
     }
-    log.Printf("WatchDog error for key %s: %v", item.Key, err)
+    
+    log.Printf("WatchDog error: %v", err)
+
+    // Stop the watchdog early if the lock no longer exists (e.g. expired)
+    if errors.Is(err, redlock.ErrLockNotHeld) {
+        log.Println("Lock lost! Triggering early cancellation...")
+        watchCancel()
+    }
 }
 
-// Start WatchDog with the callback
 wd := redlock.NewWatchDog(locker,
-    redlock.WithCallbacks(cbCtx, errHandler),
-    // Watch item with specific interval (pass 0 for default ttl/2)
+    redlock.WithErrorCallbacks(context.Background(), errHandler),
     redlock.WithItem("resource-1", "token-1", 10*time.Second, 2*time.Second),
 )
-go wd.Run(ctx)
+go wd.Run(watchCtx)
 ```
 
 > [!WARNING]
-> The watchdog goroutine (`Watch` or `WatchWithInterval`) will **not** stop automatically if the lock is lost or fails to extend. It will continue attempting to extend the lock indefinitely until the provided `context` is canceled.
->
-> **Design Rationale:** This behavior is intentional to handle cases where the watchdog is started before the lock is successfully acquired (e.g., during a retry loop) or to survive transient network failures. It avoids prematurely killing the watchdog due to temporary errors.
->
-> Always ensure you cancel the context when the operation is finished or if you detect that the lock has been lost.
+> The isolated background watchdog logic will **not** stop automatically if the lock is lost or fails to extend. It will continue attempting to extend the lock indefinitely until the provided `context` is canceled. This intentional design prevents premature termination during transient network failures.
+
+---
 
 ### Custom Retry Strategies
 
-You can implement your own retry logic by satisfying the `Waiter` interface:
+Implement your own retry logic by satisfying the `Waiter` interface:
 
 ```go
 type Waiter interface {
@@ -232,49 +221,12 @@ type Waiter interface {
 }
 ```
 
-#### Example: Fixed Delay Waiter
+**Implementation Nuances:**
+- **0-indexed `times`**: The `times` argument starts at `0`. Your implementation **must** return immediately when `times == 0`.
+- **Buffered Channel**: Use a buffered channel (e.g., `make(chan WaitInfo, 1)`) to avoid goroutine leaks if the caller stops listening.
+- **Context Handling**: Respect `ctx.Done()` and return `WaitInfo{Err: ctx.Err()}` immediately if cancelled.
 
-```go
-type FixedWait struct {
-    delay time.Duration
-    max   int
-}
-
-func (f *FixedWait) Wait(ctx context.Context, times int) <-chan redlock.WaitInfo {
-    ch := make(chan redlock.WaitInfo, 1) // Buffered to prevent leaks
-    defer close(ch)
-
-    // 1. Handle initial attempt (times=0) immediately
-    if times == 0 {
-        ch <- redlock.WaitInfo{DoneAt: time.Now()}
-        return ch
-    }
-
-    // 2. check max retries
-    if f.max >= 0 && times > f.max {
-        ch <- redlock.WaitInfo{Err: redlock.ErrMaxRetryExceeded}
-        return ch
-    }
-
-    // 3. Wait for delay or context cancellation
-    select {
-    case <-ctx.Done():
-        ch <- redlock.WaitInfo{Err: ctx.Err()}
-    case t := <-time.After(f.delay):
-        ch <- redlock.WaitInfo{DoneAt: t}
-    }
-    
-    return ch
-}
-```
-
-#### Implementation Nuances
-
-- **0-indexed `times`**: The `times` argument starts at `0` for the initial acquisition attempt. Your implementation **must** return immediately (no delay) when `times == 0`.
-- **Buffered Channel**: Always use a buffered channel (`make(chan WaitInfo, 1)`). This ensures that if the caller cancels or stops waiting, your goroutine (if you spawned one) or the channel send doesn't block forever.
-- **Context Handling**: You must respect `ctx.Done()` and return `WaitInfo{Err: ctx.Err()}` immediately if cancelled.
-- **Error Propagation**: Return `ErrMaxRetryExceeded` when your retry limit is reached.
-
+---
 
 ## Error Handling
 
@@ -282,34 +234,14 @@ The package provides sentinel errors for reliable error checking:
 
 | Error                 | Description                                                                    |
 | --------------------- | ------------------------------------------------------------------------------ |
-| `ErrLockAlreadyHeld`  | Lock is held by another client (from `TryAcquire`)                             |
-| `ErrLockNotHeld`      | Lock doesn't exist or fencing token mismatch (from `TryExtend`)                |
+| `ErrLockAlreadyHeld`  | Lock is held by another client                                                 |
+| `ErrLockNotHeld`      | Attempting to extend or release an unowned lock                                |
 | `ErrMaxRetryExceeded` | Maximum retry attempts exhausted                                               |
 | `ErrValidityExpired`  | Lock acquired but validity expired due to clock drift (`DistributedLock` only) |
 
-```go
-fencing, err := lock.Acquire(ctx, key, ttl)
-if err != nil {
-    switch {
-    case errors.Is(err, redlock.ErrLockAlreadyHeld):
-        log.Println("Resource busy")
-    case errors.Is(err, redlock.ErrMaxRetryExceeded):
-        log.Println("Max retries reached")
-    case errors.Is(err, redlock.ErrValidityExpired):
-        log.Println("Lock validity expired")
-    case errors.Is(err, redlock.ErrLockNotHeld):
-        log.Println("Cannot extend: lock not held")
-    case errors.Is(err, context.DeadlineExceeded):
-        log.Println("Timeout")
-    default:
-        log.Printf("Error: %v", err)
-    }
-}
-```
-
 ### Unwrapping Joined Errors
 
-`DistributedLock` operations may join errors from multiple instances using `errors.Join()`:
+`DistributedLock` operations may join errors from multiple instances using `errors.Join()`. You can unwrap these for granular inspection:
 
 ```go
 if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
@@ -320,11 +252,9 @@ if unwrapper, ok := err.(interface{ Unwrap() []error }); ok {
 ```
 
 > [!CAUTION]
-> **Release Error Handling**: The `Release` method for `DistributedLock` will return an error if **any** single Redis instance fails to release the lock, even if the release was successful on the majority of nodes (quorum).
->
-> This ensures you are aware of potential cleanup issues. It does **not** necessarily mean the lock is still valid or held. You should inspect the error (using `errors.Join` unwrapping as shown above) to decide how to proceed (e.g., ignore if it was a minor network blip on one node).
->
-> Use `ReleaseWithCount` if you need detailed release information, which returns a `ReleaseStatus` containing the total lock count, success count, whether quorum was reached, and any aggregated errors.
+> **Release Error Handling**: `Release` for `DistributedLock` returns an error if **any** single Redis instance fails to release the lock. This ensures you are aware of potential cleanup issues, even if the release was successful on the majority of nodes (quorum). Use `ReleaseWithCount` if you need detailed success rates.
+
+---
 
 ## Testing
 

@@ -4,16 +4,16 @@ import "errors"
 
 // Sentinel errors returned by lock operations.
 var (
-	// ErrLockAlreadyHeld is returned by TryAcquire when the lock is held by another client.
+	// ErrLockAlreadyHeld is returned when a requested lock is currently owned by another client.
 	ErrLockAlreadyHeld = errors.New("lock already held")
 
-	// ErrLockNotHeld is returned by TryExtend when the lock doesn't exist or fencing token doesn't match.
+	// ErrLockNotHeld is returned when attempting to extend or release an unowned lock.
 	ErrLockNotHeld = errors.New("lock not held")
 
-	// ErrMaxRetryExceeded is returned when the maximum retry attempts have been exhausted.
+	// ErrMaxRetryExceeded is returned when a lock acquisition fails after exhausting all retry attempts.
 	ErrMaxRetryExceeded = errors.New("max retry exceeded")
 
-	// ErrValidityExpired is returned when a lock is acquired but the validity time
-	// has expired due to clock drift or slow acquisition across instances.
+	// ErrValidityExpired is returned when a distributed lock is acquired, but the validity duration
+	// is entirely consumed by clock drift or acquisition latency across instances.
 	ErrValidityExpired = errors.New("lock validity expired")
 )

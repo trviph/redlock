@@ -10,70 +10,54 @@ type WaitInfo struct {
 	Err    error
 }
 
-// Waiter defines the interface for controlling retry behavior and backoff strategies.
-// Implementations of this interface determine how long to wait between retry attempts
-// and when to stop retrying.
+// Waiter controls the retry behavior and backoff strategies for lock acquisitions.
+// Implementations dictate the delay duration between retry attempts and the termination condition.
 type Waiter interface {
-	// Wait returns a channel that will receive a WaitInfo struct after the appropriate retry delay.
+	// Wait returns a channel that receives a WaitInfo struct after the appropriate retry delay.
 	//
-	// Parameters:
-	//   - ctx: The context to monitor for cancellation. If the context is cancelled while waiting,
-	//          Wait must return immediately with a WaitInfo containing the context error.
-	//   - times: The current attempt number (0-indexed). 0 indicates the initial attempt.
+	// The ctx parameter monitors for cancellation. If cancelled, Wait returns immediately
+	// with a WaitInfo containing the context error.
+	// The times parameter represents the current attempt number (0-indexed). 0 indicates
+	// the initial attempt and should generally return immediately without delay.
 	//
-	// Returns:
-	//   A receive-only channel of WaitInfo.
-	//   - If the retry limit is exceeded or the operation should stop, the channel will receive
-	//     a WaitInfo with an Err (e.g., ErrMaxRetryExceeded).
-	//   - If the wait completes successfully, the channel will receive a WaitInfo with DoneAt set
-	//     to the current time.
-	//   - The channel should be buffered or the sender should not block if the receiver stops listening
-	//     (though typically the caller waits on the channel).
+	// The returned channel should be buffered (e.g., make(chan WaitInfo, 1)) to guarantee
+	// the sender does not block indefinitely if the receiver stops listening.
 	Wait(ctx context.Context, times int) <-chan WaitInfo
 }
 
-// Locker defines the common interface implemented by both Lock and DistributedLock.
-// This allows code to be written against the interface and work with either implementation.
+// Locker defines the common interface implemented by both [Lock] and [DistributedLock].
 type Locker interface {
-	// Acquire acquires a lock with a randomly generated fencing token.
-	// It retries according to the lock's configuration until success, context cancellation,
-	// or max retries exceeded.
-	// Returns the fencing token on success, which must be passed to Release.
+	// Acquire generates a random fencing token, then attempts to acquire the lock.
+	// It retries according to the underlying Waiter configuration until success, context cancellation,
+	// or the retry limit is reached.
 	Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error)
 
-	// TryAcquire attempts to acquire a lock exactly once without retrying.
-	// Returns the fencing token on success, or ErrLockAlreadyHeld if the lock is held.
+	// TryAcquire attempts to acquire the lock exactly once without retrying.
+	// It returns ErrLockAlreadyHeld if the lock is currently held by another client.
 	TryAcquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error)
 
-	// AcquireWithFencing acquires a lock with a provided fencing token.
-	// It retries according to the lock's configuration until success, context cancellation,
-	// or max retries exceeded.
+	// AcquireWithFencing attempts to acquire the lock using the provided fencing token.
+	// It retries according to the underlying Waiter configuration.
 	AcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) error
 
-	// TryAcquireWithFencing attempts to acquire a lock exactly once with a provided fencing token.
-	// Returns nil on success, or ErrLockAlreadyHeld if the lock is held.
+	// TryAcquireWithFencing attempts to acquire the lock exactly once using the provided fencing token.
 	TryAcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) error
 
-	// AcquireOrExtend acquires a lock or extends it if the fencing token matches.
-	// It retries according to the lock's configuration until success, context cancellation,
-	// or max retries exceeded.
+	// AcquireOrExtend extends the lock if the provided fencing token matches the current owner.
+	// If the lock does not exist, it behaves identically to AcquireWithFencing.
 	AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) error
 
-	// Extend extends the TTL of an existing lock if the fencing token matches.
-	// Unlike AcquireOrExtend, this will not attempt to acquire if the lock doesn't exist.
-	// It retries according to the lock's configuration.
+	// Extend prolongs the TTL of an existing lock if the fencing token matches.
+	// Unlike AcquireOrExtend, this will not acquire the lock if it is currently unowned.
 	Extend(ctx context.Context, key, fencing string, ttl time.Duration) error
 
 	// TryExtend attempts to extend the TTL exactly once without retrying.
-	// Returns nil on success, ErrLockNotHeld if the lock doesn't exist or fencing doesn't match.
+	// It returns ErrLockNotHeld if the lock does not exist or the fencing token does not match.
 	TryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error
 
-	// Release releases a lock if the fencing token matches.
-	// This operation is atomic and will only release if the caller owns the lock.
-	//
-	// Note: For DistributedLock, this returns an error if *any* instance fails to release,
-	// even if the lock is effectively released (e.g. released on majority of nodes).
-	// Callers should inspect the error (using errors.As/Is) if granular handling is needed.
+	// Release atomically deletes the lock if the caller's fencing token matches the current owner.
+	// For DistributedLock, returning an error implies the release failed on at least one instance,
+	// which may require manual inspection via the joined error.
 	Release(ctx context.Context, key, fencing string) error
 }
 

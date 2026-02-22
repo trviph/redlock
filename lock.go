@@ -16,8 +16,8 @@ type redisClient interface {
 }
 
 // Lock provides a distributed lock backed by a single Redis instance.
-// It supports automatic retry with configurable backoff (via `Waiter`), atomic operations
-// via Lua scripts, and fencing tokens for safe lock ownership.
+// It supports automatic retries with configurable backoff (via [Waiter]), atomic operations
+// using Lua scripts, and internally generated fencing tokens to guarantee safe lock ownership.
 type Lock struct {
 	rcli   redisClient
 	waiter Waiter
@@ -36,8 +36,9 @@ func NewLock(rcli redisClient, opts ...LockOption) *Lock {
 	return dl
 }
 
-// Acquire acquires a lock with a random uuid fencing value.
-// It returns the fencing token on success, or an error on failure.
+// Acquire generates a UUID fencing token and attempts to acquire the lock.
+// It returns the generated fencing token on success, or an error if the context is
+// cancelled, the retry limit is exceeded, or token generation fails.
 func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
 	fencing, err = newFencingToken()
 	if err != nil {
@@ -47,9 +48,8 @@ func (dl *Lock) Acquire(ctx context.Context, key string, ttl time.Duration) (fen
 	return fencing, err
 }
 
-// TryAcquire attempts to acquire a lock exactly once without retrying.
-// It returns the fencing token on success, or an error on failure.
-// If the lock is already held, it returns ErrLockAlreadyHeld.
+// TryAcquire generates a UUID fencing token and attempts to acquire the lock exactly once.
+// It returns ErrLockAlreadyHeld if the resource is currently locked by another client.
 func (dl *Lock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
 	fencing, err = newFencingToken()
 	if err != nil {
@@ -62,8 +62,8 @@ func (dl *Lock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (
 	return fencing, nil
 }
 
-// TryAcquireWithFencing attempts to acquire a lock exactly once with a provided fencing token.
-// Returns nil on success, or ErrLockAlreadyHeld if the lock is held.
+// TryAcquireWithFencing attempts to acquire the lock exactly once using the provided fencing token.
+// It returns ErrLockAlreadyHeld if the resource is currently locked.
 func (dl *Lock) TryAcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	cmd := dl.rcli.SetNX(ctx, key, fencing, ttl)
 	if cmd.Err() != nil {
@@ -75,9 +75,8 @@ func (dl *Lock) TryAcquireWithFencing(ctx context.Context, key, fencing string, 
 	return nil
 }
 
-// AcquireOrExtend acquires a lock, if the fencing value matches, extends the lock.
-// If the lock does not exist, it attempts to acquire it.
-// It returns nil on success, or an error on failure.
+// AcquireOrExtend prolongs the lock TTL if the current owner matches the provided fencing token.
+// If the lock does not exist, it behaves identically to AcquireWithFencing and attempts to claim it.
 func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
@@ -102,10 +101,9 @@ func (dl *Lock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl ti
 	}
 }
 
-// Extend extends the TTL of an existing lock if the fencing token matches.
-// Unlike AcquireOrExtend, this will not attempt to acquire if the lock doesn't exist.
-// Returns nil on success, or an error if the lock doesn't exist, fencing doesn't match,
-// or max retries exceeded.
+// Extend prolongs the TTL of an existing lock if the fencing token matches the current owner.
+// Unlike AcquireOrExtend, it does not attempt to claim an unowned lock.
+// It returns ErrLockNotHeld if the lock does not exist or the token is incorrect.
 func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
@@ -126,8 +124,8 @@ func (dl *Lock) Extend(ctx context.Context, key, fencing string, ttl time.Durati
 	}
 }
 
-// TryExtend attempts to extend the TTL of an existing lock exactly once without retrying.
-// Returns nil on success, ErrLockNotHeld if the lock doesn't exist or fencing doesn't match.
+// TryExtend attempts to extend the TTL of an existing lock exactly once.
+// It returns ErrLockNotHeld if the lock does not exist or the fencing token does not match.
 func (dl *Lock) TryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	cmd := runScript(ctx, dl.rcli, scriptExtend, shaExtend, []string{key}, fencing, ttl.Milliseconds())
 	if cmd.Err() != nil {
@@ -140,8 +138,8 @@ func (dl *Lock) TryExtend(ctx context.Context, key, fencing string, ttl time.Dur
 	return ErrLockNotHeld
 }
 
-// AcquireWithFencing acquires a lock with a fencing value.
-// It returns nil on success, or an error on failure.
+// AcquireWithFencing attempts to acquire the lock using the provided fencing token.
+// It retries according to the underlying Waiter configuration.
 func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
@@ -165,8 +163,8 @@ func (dl *Lock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl
 	}
 }
 
-// Release releases a lock with a fencing value.
-// Returns an error if script execution fails.
+// Release atomically deletes the lock using a Lua script if the fencing token matches.
+// An error is returned only if the underlying script execution fails entirely.
 func (dl *Lock) Release(ctx context.Context, key, fencing string) error {
 	return runScript(ctx, dl.rcli, scriptRelease, shaRelease, []string{key}, fencing).Err()
 }

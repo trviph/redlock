@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// WatchDogCallback is a function that will be called when an error occurs during the watch loop.
-// Note that if the context is canceled, the context error will be sent as the last error.
+// WatchDogCallback defines a function executed when an event occurs during the watchdog loop.
+// In the event of context cancellation, the context error is passed as the final error.
 type WatchDogCallback func(ctx context.Context, item *WatchItem, err error)
 
-// WatchItem represents a lock item that needs to be watched and renewed.
+// WatchItem defines a specific lock instance monitored and renewed by the [WatchDog].
 type WatchItem struct {
 	Key           string
 	Fencing       string
@@ -46,11 +46,11 @@ func NewWatchDog(lock Locker, opts ...WatchDogOption) *WatchDog {
 	return w
 }
 
-// Run starts the watchdog loop to monitor and extend the locks.
-// It runs until the context is canceled.
+// Run starts the watchdog loop to continuously monitor and prolong locks.
+// It executes indefinitely until the provided context is cancelled.
 //
-// WARNING(trviph): Do not use context.Background() without a cancel mechanism (e.g. WithCancel),
-// otherwise the watchdog will never terminate.
+// WARNING(trviph): Do not pass context.Background() without a cancellation mechanism
+// (e.g., context.WithCancel), otherwise the watchdog goroutine will leak and never terminate.
 func (w *WatchDog) Run(ctx context.Context) {
 	for _, item := range w.items {
 		go func(item *WatchItem) {
@@ -92,16 +92,14 @@ func (w *WatchDog) Run(ctx context.Context) {
 	}
 }
 
-// Watch starts a watchdog goroutine that periodically extends the lock's TTL.
-// It is designed to be used for long-running operations where the duration is unknown.
-// The watchdog stops when the provided context is canceled.
+// Watch spawns a background goroutine to periodically prolong a lock's TTL.
+// It is intended for operations of an unknown duration and extends the lock at
+// an interval of half the TTL. The watchdog terminates only when the context is cancelled.
 //
-// The watchdog attempts to extend the lock at intervals of TTL/2.
+// Use [WatchDog] for advanced error handling, logging, or premature termination.
 //
-// For more control on handling errors (logging, early stopping), use [WatchDog].
-//
-// WARNING(trviph): Do not use context.Background() without a cancel mechanism (e.g. WithCancel),
-// otherwise the watchdog will never terminate.
+// WARNING(trviph): Do not pass context.Background() without a cancellation mechanism
+// (e.g., context.WithCancel), otherwise the watchdog goroutine will leak and never terminate.
 //
 // BUG(trviph): The Watch function relies on TryExtend. When using a DistributedLock, it suffers
 // from the partial extension issue on quorum failure. If DistributedLock.TryExtend fails to
@@ -113,14 +111,14 @@ func Watch(ctx context.Context, locker Locker, key, fencing string, ttl time.Dur
 	WatchWithInterval(ctx, locker, key, fencing, ttl, ttl/2)
 }
 
-// WatchWithInterval starts a watchdog goroutine that periodically extends the lock's TTL.
-// It allows customizing the interval between extension attempts.
-// The watchdog stops when the provided context is canceled.
+// WatchWithInterval spans a background goroutine to periodically prolong a lock's TTL
+// using a custom interval between extension attempts.
+// The watchdog terminates only when the context is cancelled.
 //
-// For more control on handling errors (logging, early stopping), use [WatchDog].
+// Use [WatchDog] for advanced error handling, logging, or premature termination.
 //
-// WARNING(trviph): Do not use context.Background() without a cancel mechanism (e.g. WithCancel),
-// otherwise the watchdog will never terminate.
+// WARNING(trviph): Do not pass context.Background() without a cancellation mechanism
+// (e.g., context.WithCancel), otherwise the watchdog goroutine will leak and never terminate.
 //
 // BUG(trviph): The WatchWithInterval function relies on TryExtend. When using a DistributedLock,
 // it suffers from the partial extension issue on quorum failure. If DistributedLock.TryExtend fails to

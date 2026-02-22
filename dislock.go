@@ -46,19 +46,15 @@ func NewDistributedLock(locks []*Lock, opts ...DistributedLockOption) *Distribut
 	return dl
 }
 
-// Acquire attempts to acquire the lock across all Redis instances concurrently.
-// It generates a unique fencing token and requires a quorum (N/2 + 1) of instances
-// to successfully acquire the lock. If quorum is not reached, all acquired locks
-// are automatically released.
+// Acquire attempts to claim the lock across all Redis instances concurrently.
+// It generates a unique fencing token and requires a quorum (N/2 + 1) to succeed.
+// If quorum is not reached, any acquired locks are automatically released.
 //
-// The method also validates that the lock is still valid after acquisition by
-// checking that the elapsed time plus clock drift allowance is less than the TTL.
+// The lock is validated post-acquisition to ensure the elapsed time plus clock drift
+// does not exceed the TTL. It retries automatically based on the [Waiter] configuration.
 //
-// Internally, this method retries by calling [DistributedLock.TryAcquire] until
-// success, context cancellation, or max retries exceeded.
-//
-// Returns the fencing token on success, which must be passed to Release.
-// Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
+// Returns the fencing token on success, or an error if quorum fails, clock drift
+// expires the lock, or the context is cancelled.
 func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
 	fencing, err = newFencingToken()
 	if err != nil {
@@ -68,18 +64,14 @@ func (dl *DistributedLock) Acquire(ctx context.Context, key string, ttl time.Dur
 	return fencing, err
 }
 
-// AcquireWithFencing attempts to acquire the lock with a provided fencing token
-// across all Redis instances concurrently. It requires a quorum (N/2 + 1) of instances
-// to successfully acquire the lock. If quorum is not reached, all acquired locks
-// are automatically released.
+// AcquireWithFencing attempts to claim the lock using the provided fencing token
+// across all Redis instances concurrently. It requires a quorum (N/2 + 1) to succeed.
+// If quorum is not reached, any acquired locks are automatically released.
 //
-// The method also validates that the lock is still valid after acquisition by
-// checking that the elapsed time plus clock drift allowance is less than the TTL.
+// The lock is validated post-acquisition to ensure the elapsed time plus clock drift
+// does not exceed the TTL. It retries automatically based on the [Waiter] configuration.
 //
-// Internally, this method retries by calling [DistributedLock.TryAcquireWithFencing]
-// until success, context cancellation, or max retries exceeded.
-//
-// Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
+// Returns an error if quorum fails, clock drift expires the lock, or the context is cancelled.
 func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
@@ -104,9 +96,9 @@ func (dl *DistributedLock) AcquireWithFencing(ctx context.Context, key, fencing 
 	}
 }
 
-// TryAcquire attempts to acquire the lock exactly once across all Redis instances
-// without retrying. It requires a quorum (N/2 + 1) of instances to successfully
-// acquire the lock. If quorum is not reached, all acquired locks are automatically released.
+// TryAcquire generates a unique fencing token and attempts to claim the lock exactly
+// once across all Redis instances. It requires a quorum (N/2 + 1) to succeed.
+// If quorum is not reached, any acquired locks are automatically released.
 //
 // Returns the fencing token on success, or ErrLockAlreadyHeld if quorum cannot be achieved.
 func (dl *DistributedLock) TryAcquire(ctx context.Context, key string, ttl time.Duration) (fencing string, err error) {
@@ -121,11 +113,11 @@ func (dl *DistributedLock) TryAcquire(ctx context.Context, key string, ttl time.
 	return fencing, nil
 }
 
-// TryAcquireWithFencing attempts to acquire the lock exactly once with a provided fencing token
-// across all Redis instances without retrying. It requires a quorum (N/2 + 1) of instances
-// to successfully acquire the lock. If quorum is not reached, all acquired locks are automatically released.
+// TryAcquireWithFencing attempts to claim the lock exactly once using the provided
+// fencing token across all Redis instances. It requires a quorum (N/2 + 1) to succeed.
+// If quorum is not reached, any acquired locks are automatically released.
 //
-// Returns nil on success, or ErrLockAlreadyHeld if quorum cannot be achieved.
+// Returns ErrLockAlreadyHeld if quorum cannot be achieved.
 func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fencing string, ttl time.Duration) (err error) {
 	startTime := time.Now()
 
@@ -170,21 +162,19 @@ func (dl *DistributedLock) TryAcquireWithFencing(ctx context.Context, key, fenci
 	return ErrLockAlreadyHeld
 }
 
-// Release releases the lock from all Redis instances.
-// Returns an error if at least one release failed, aggregating the error count.
+// Release removes the lock from all Redis instances using the provided fencing token.
 //
-// Note: This continues to release on all instances even if some fail.
-// An error return does not necessarily mean the lock is still held; it just means
-// clean-up failed on some nodes.
-//
-// Use [DistributedLock.ReleaseWithCount] if you need detailed release information.
+// An error return implies clean-up failed on one or more nodes, though the lock may
+// already be effectively released from a quorum perspective. Use [DistributedLock.ReleaseWithCount]
+// for granular release status.
 func (dl *DistributedLock) Release(ctx context.Context, key, fencing string) error {
 	_, err := dl.ReleaseWithCount(ctx, key, fencing)
 	return err
 }
 
-// ReleaseWithCount releases the lock from all Redis instances and returns the status of releases.
-// Returns a ReleaseStatus struct and an error if at least one release failed.
+// ReleaseWithCount removes the lock from all Redis instances and returns detailed
+// execution metrics, including whether a quorum was successfully reached during release.
+// It returns an aggregated error if any instance fails to release.
 func (dl *DistributedLock) ReleaseWithCount(ctx context.Context, key, fencing string) (ReleaseStatus, error) {
 	var wg sync.WaitGroup
 	var successCount atomic.Int32
@@ -223,14 +213,11 @@ func (dl *DistributedLock) ReleaseWithCount(ctx context.Context, key, fencing st
 	return status, nil
 }
 
-// Extend extends the TTL of an existing lock across all Redis instances concurrently.
-// Requires a quorum (N/2 + 1) of instances to successfully extend the lock.
-// Also validates that the lock is still valid after extension by checking clock drift.
+// Extend prolongs the TTL of an existing lock concurrently across all Redis instances.
+// It requires a quorum (N/2 + 1) to succeed, and validates the lock against clock drift.
+// The operation retries automatically based on the [Waiter] configuration.
 //
-// Internally, this method retries by calling [DistributedLock.TryExtend] until
-// success, context cancellation, or max retries exceeded.
-//
-// Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
+// Returns an error if quorum fails, clock drift expires the lock, or the context is cancelled.
 func (dl *DistributedLock) Extend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	retries := 0
 	for {
@@ -255,9 +242,9 @@ func (dl *DistributedLock) Extend(ctx context.Context, key, fencing string, ttl 
 	}
 }
 
-// TryExtend attempts to extend the TTL of an existing lock exactly once across all Redis instances.
-// Requires a quorum (N/2 + 1) of instances to successfully extend the lock.
-// Returns nil on success, ErrLockNotHeld if quorum cannot be achieved.
+// TryExtend attempts to prolong the TTL of an existing lock exactly once across all Redis instances.
+// It requires a quorum (N/2 + 1) to succeed.
+// Returns ErrLockNotHeld if quorum cannot be achieved.
 func (dl *DistributedLock) TryExtend(ctx context.Context, key, fencing string, ttl time.Duration) error {
 	startTime := time.Now()
 	var win atomic.Int32
@@ -291,16 +278,11 @@ func (dl *DistributedLock) TryExtend(ctx context.Context, key, fencing string, t
 }
 
 // AcquireOrExtend acquires a new lock or extends an existing one if the fencing token matches.
-// It attempts the operation across all Redis instances concurrently and requires a quorum
-// (N/2 + 1) of instances to succeed.
-// Also validates that the lock is still valid after the operation by checking clock drift.
+// It executes concurrently across all Redis instances and requires a quorum (N/2 + 1) to succeed.
 //
-// WARNING(trviph): On failure (quorum not achieved or clock drift expired), this method releases ALL
-// locks across ALL instances, including any locks that were already held before this call.
-// If you need to preserve an existing lock on failure, use [DistributedLock.Extend]
-// or [DistributedLock.TryExtend] instead.
-//
-// Returns an error if quorum cannot be achieved, clock drift check fails, or context is cancelled.
+// WARNING(trviph): On failure (e.g., quorum not achieved or clock drift expired), this method
+// automatically releases ALL locks across ALL instances, including any locks that were already
+// held before the call. To safely extend without risking release on failure, use [DistributedLock.Extend].
 func (dl *DistributedLock) AcquireOrExtend(ctx context.Context, key, fencing string, ttl time.Duration) (err error) {
 	startTime := time.Now()
 	var win atomic.Int32
