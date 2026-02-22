@@ -1,122 +1,51 @@
 // Package redlock provides Redis-backed distributed lock implementations.
 //
-// This package offers two complementary lock types for different deployment scenarios:
+// This package offers two complementary lock types for different deployment scenarios
+// and emphasizes strict safety through fencing tokens and consensus.
 //
-// # Lock (Single Instance)
+// For in-depth usage examples, idiom references, and integration guides,
+// see the package README.md.
 //
-// [Lock] provides a distributed lock backed by a single Redis instance. It supports:
-//   - Automatic retry with configurable jitter and backoff via [Waiter] interface
-//   - Atomic acquisition and release using Lua scripts
-//   - Fencing tokens (UUIDs) to prevent unsafe lock hand-off
-//   - Lock extension for long-running operations
-//   - Watchdog pattern support via [Watch] and [WatchWithInterval]
+// # Core Components
 //
-// Example usage:
+//   - [Lock]: A distributed lock backed by a single Redis instance. It supports automatic
+//     retries, configurable backoff (via [Waiter]), and atomic operations using Lua scripts.
+//   - [DistributedLock]: An implementation of the Redlock algorithm for environments
+//     requiring high availability. It acquires locks across multiple independent Redis
+//     instances and uses quorum-based consensus (N/2 + 1) to determine ownership.
+//   - [Waiter]: An interface for controlling retry behavior and backoff strategies
+//     during lock acquisition. Built-in implementations include [JitterWait] and [ExponentialWait].
 //
-//	lock := redlock.NewLock(redisClient,
-//	    redlock.WithWaiter(redlock.NewJitterWait(
-//	        redlock.WithJitterMaxIteration(5),
-//	        redlock.WithMaxJitterDuration(200*time.Millisecond),
-//	    )),
-//	    // Or use exponential backoff:
-//	    // redlock.WithWaiter(redlock.NewExponentialWait(
-//	    //     redlock.WithExpMinDelay(100*time.Millisecond),
-//	    //     redlock.WithExpMaxDelay(5*time.Second),
-//	    // )),
-//	)
-//	fencing, err := lock.Acquire(ctx, "my-resource", 30*time.Second)
-//	if err != nil {
-//	    // handle error
-//	}
-//	defer lock.Release(ctx, "my-resource", fencing)
+// # Trade-offs
 //
-// # DistributedLock (Multi-Instance Redlock)
-//
-// [DistributedLock] implements the Redlock algorithm for environments requiring
-// higher availability. It acquires locks across multiple independent Redis instances
-// and uses quorum-based consensus (N/2 + 1) to determine lock ownership.
-//
-// Example usage:
-//
-//	locks := []*redlock.Lock{
-//	    redlock.NewLock(redis1),
-//	    redlock.NewLock(redis2),
-//	    redlock.NewLock(redis3),
-//	}
-//	dl := redlock.NewDistributedLock(locks,
-//	    redlock.WithClockDriftFactor(0.01),
-//	    redlock.WithClockDriftBuffer(2*time.Millisecond),
-//	    redlock.WithDistWaiter(redlock.NewJitterWait(
-//	        redlock.WithJitterMaxIteration(-1),
-//	        redlock.WithMaxJitterDuration(300*time.Millisecond),
-//	    )),
-//	)
-//	fencing, err := dl.Acquire(ctx, "my-resource", 30*time.Second)
-//	if err != nil {
-//	    // handle error
-//	}
-//	defer dl.Release(ctx, "my-resource", fencing)
+//   - Performance vs Safety: [Lock] provides faster acquisition via a single network hop
+//     but sacrifices availability if the Redis node fails. [DistributedLock] guarantees
+//     safety and availability during node failures at the cost of higher latency.
+//   - Auto-renewal constraints: Background watchdogs ([Watch], [WatchWithInterval], [WatchDog])
+//     rely exclusively on context cancellation for termination. They will NOT halt automatically if
+//     the underlying lock is lost or TTL extension fails.
 //
 // # Fencing Tokens
 //
-// Both lock types return a fencing token (UUID string) upon successful acquisition.
-// This token must be passed to [Lock.Release] or [DistributedLock.Release] (or [DistributedLock.ReleaseWithCount]) to ensure
-// only the lock owner can release it. Fencing tokens can also be used by downstream
-// systems to detect stale lock holders.
+// Fencing tokens are UUID strings generated upon successful lock acquisition.
+// These tokens must be passed to release or extend operations to prevent race conditions
+// and unsafe lock hand-offs. They can also be used by downstream systems to detect stale locks.
 //
 // # Configuration
 //
 // Both lock types use functional options for configuration:
-//   - [Lock]: [WithWaiter] (and [JitterWaitOption]s for [NewJitterWait], or [ExponentialWaitOption]s for [NewExponentialWait])
+//   - [Lock]: [WithWaiter] (configuring [JitterWaitOption] or [ExponentialWaitOption]).
 //   - [DistributedLock]: [WithClockDriftFactor], [WithClockDriftBuffer], [WithReleaseTimeout],
-//     [WithDistWaiter]
-//
-// Note: Older configuration options (e.g., [WithMaxRetry], [WithJitterDuration]) are deprecated
-// but remain available for backward compatibility when using the default [JitterWait].
-//
-// # Watchdog Pattern
-//
-// [Watch] and [WatchWithInterval] provide a background goroutine to automatically extend
-// the lock duration.
-//
-// Warning: The watchdog will **not** stop automatically if the lock is lost or fails
-// to extend. It will continue attempting to extend the lock indefinitely until the
-// provided context is canceled.
-//
-// This design handles cases where the watchdog is started before the lock is successfully
-// acquired (e.g., in a background retry loop) and ensures resilience against transient
-// network failures. The user is responsible for managing the watchdog's lifecycle via
-// the context.
-//
-// # WatchDog with Callbacks
-//
-// [WatchDog] allows monitoring multiple locks with custom error handling via callbacks.
-//
-//	// Define a callback to handle errors
-//	errHandler := func(ctx context.Context, item *redlock.WatchItem, err error) {
-//	    if err == context.Canceled {
-//	        // Context cancellation is always the last error received
-//	        log.Printf("WatchDog stopped for key %s\n", item.Key)
-//	    } else {
-//	        log.Printf("WatchDog error for key %s: %v\n", item.Key, err)
-//	    }
-//	}
-//
-//	// Start WatchDog with the callback
-//	wd := redlock.NewWatchDog(locker,
-//	    redlock.WithCallbacks(cbCtx, errHandler),
-//	    // Watch item with specific interval (pass 0 for default ttl/2)
-//	    redlock.WithItem("resource-1", "token-1", 10*time.Second, 2*time.Second),
-//	)
-//	go wd.Run(ctx)
+//     and [WithDistWaiter].
 //
 // # Sentinel Errors
 //
 // The package exports sentinel errors for reliable error checking with [errors.Is]:
-//   - [ErrLockAlreadyHeld]: returned by TryAcquire when the lock is held by another client
-//   - [ErrLockNotHeld]: returned by TryExtend when the lock doesn't exist or fencing token doesn't match
-//   - [ErrMaxRetryExceeded]: returned when retry attempts are exhausted
-//   - [ErrValidityExpired]: returned when clock drift causes lock validity to expire
+//   - [ErrLockAlreadyHeld]: The requested lock is currently owned by another client.
+//   - [ErrLockNotHeld]: Attempting to extend or release an unowned lock.
+//   - [ErrMaxRetryExceeded]: Lock acquisition failed after exhausting all retry attempts.
+//   - [ErrValidityExpired]: The distributed lock was acquired, but its validity duration
+//     was completely consumed by clock drift or acquisition latency.
 //
 // # References
 //

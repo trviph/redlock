@@ -8,9 +8,13 @@ import (
 	"time"
 )
 
-// JitterWait implements a retry strategy with constant delay plus random jitter.
-// It allows defining a maximum number of retries, a minimum base delay, and a maximum jitter duration.
-// The actual delay for each retry is calculated as: MinDelay + random(0, MaxJitterDuration).
+// JitterWait implements a retry strategy using a constant base delay plus random jitter.
+// The actual delay for each retry is calculated as:
+//
+//	Delay = MinDelay + random(0, MaxJitterDuration)
+//
+// This strategy helps prevent thundering herd problems by spreading out concurrent
+// retry attempts across multiple clients.
 type JitterWait struct {
 	// MaxIteration specifies the maximum number of retry attempts.
 	// A value of -1 indicates infinite retries.
@@ -46,8 +50,8 @@ func DefaultJitterWait() *JitterWait {
 	}
 }
 
-// NextDelay returns the delay duration for the next retry attempt.
-// The retries argument corresponds to the number of attempts so far (1 for the first retry).
+// NextDelay calculates the duration for the upcoming retry attempt.
+// The retries parameter indicates the number of attempts made so far (e.g., 1 for the first retry).
 func (jr *JitterWait) NextDelay(retries int) time.Duration {
 	var jitter time.Duration
 	if jr.maxJitterDuration > 0 {
@@ -63,16 +67,14 @@ func (jr *JitterWait) NextDelay(retries int) time.Duration {
 	return jr.minDelay + jitter
 }
 
-// Wait implements the Waiter interface.
-// It calculates the delay based on JitterWait configuration and waits for that duration.
+// Wait implements the [Waiter] interface using a jittered delay strategy.
 //
 // Behavior:
-//   - If times == 0 (first attempt): Returns immediately.
-//   - If MaxIteration >= 0 and times > MaxIteration: Returns ErrMaxRetryExceeded.
+//   - Initial attempt (times == 0): Returns immediately.
+//   - Retry limit exceeded (MaxIteration >= 0 and times > MaxIteration): Returns ErrMaxRetryExceeded.
 //   - Otherwise: Waits for MinDelay + random(0, MaxJitterDuration).
 //
-// This method respects context cancellation. If ctx is cancelled during the wait,
-// it returns immediately with the context error.
+// If the context is cancelled while waiting, it returns immediately with the context error.
 func (jr *JitterWait) Wait(ctx context.Context, times int) <-chan WaitInfo {
 	waitChan := make(chan WaitInfo, 1)
 	defer close(waitChan)
@@ -103,8 +105,13 @@ func (jr *JitterWait) Wait(ctx context.Context, times int) <-chan WaitInfo {
 	}
 }
 
-// ExponentialWait implements a retry strategy with exponential backoff.
-// The delay increases exponentially with each attempt: delay = minDelay * (factor ^ times).
+// ExponentialWait implements a retry strategy using exponential backoff.
+// The delay increases exponentially with each subsequent attempt:
+//
+//	Delay = MinDelay * (Factor ^ (Attempts - 1))
+//
+// This strategy is ideal for environments where prolonged outages require
+// aggressively expanding wait times to reduce load on the Redis cluster.
 type ExponentialWait struct {
 	// minDelay is the initial delay duration.
 	minDelay time.Duration
@@ -140,8 +147,8 @@ func DefaultExponentialWait() *ExponentialWait {
 	}
 }
 
-// NextDelay returns the delay duration for the next retry attempt.
-// The retries argument corresponds to the number of attempts so far (1 for the first retry).
+// NextDelay calculates the exponential duration for the upcoming retry attempt.
+// The retries parameter indicates the number of attempts made so far.
 func (ew *ExponentialWait) NextDelay(retries int) time.Duration {
 	// If minDelay is 0, exponential backoff doesn't make sense.
 	if ew.minDelay <= 0 {
@@ -161,7 +168,7 @@ func (ew *ExponentialWait) NextDelay(retries int) time.Duration {
 	return delay
 }
 
-// Wait implements the Waiter interface.
+// Wait implements the [Waiter] interface using an exponential backoff strategy.
 func (ew *ExponentialWait) Wait(ctx context.Context, times int) <-chan WaitInfo {
 	waitChan := make(chan WaitInfo, 1)
 	defer close(waitChan)
